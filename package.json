@@ -42,6 +42,8 @@
       "gl": "^8.1.6"
     },
     "scripts": {
+        "dregora:inspect": "node services/dregora-bridge/inspect.js",
+        "dregora:test": "node --test src/adapters/dregora/client.test.js",
         "postinstall": "patch-package",
         "start": "node main.js",
         "reinstall": "npm run clean:modules && npm install",

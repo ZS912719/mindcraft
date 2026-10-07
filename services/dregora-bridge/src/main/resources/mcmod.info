@@ -1,0 +1,10 @@
+[
+  {
+    "modid": "mindcraft_dregora_bridge",
+    "name": "Mindcraft Dregora Bridge",
+    "description": "Local authenticated game-state and action bridge for a dedicated Dregora bot client.",
+    "version": "0.1.0",
+    "mcversion": "1.12.2",
+    "authorList": ["Mindcraft Dregora adapter contributors"]
+  }
+]

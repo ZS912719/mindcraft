@@ -18,6 +18,8 @@
 Do not connect this bot to public servers with coding enabled. This project allows an LLM to write/execute code on your computer. The code is sandboxed, but still vulnerable to injection attacks. Code writing is disabled by default, you can enable it by setting `allow_insecure_coding` to `true` in `settings.js`. Ye be warned.
 
 # Getting Started
+
+For the isolated RLCraft Dregora adapter, see [Dregora bridge](services/dregora-bridge/README.md). This is a separate Forge client backend; the default Mineflayer runtime remains unchanged.
 ## Requirements
 
 - [Minecraft Java Edition](https://www.minecraft.net/en-us/store/minecraft-java-bedrock-edition-pc) (up to v1.21.11, recommend v1.21.6)
