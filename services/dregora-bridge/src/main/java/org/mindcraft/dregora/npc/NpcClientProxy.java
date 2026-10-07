@@ -1,6 +1,6 @@
 package org.mindcraft.dregora.npc;
 
-import net.minecraft.client.model.ModelBiped;
+import net.minecraft.client.model.ModelPlayer;
 import net.minecraft.client.renderer.entity.RenderBiped;
 import net.minecraft.client.renderer.entity.RenderManager;
 import net.minecraft.client.renderer.entity.layers.LayerBipedArmor;
@@ -13,11 +13,11 @@ public final class NpcClientProxy extends NpcProxy {
     }
     private static final class TeammateRenderer extends RenderBiped<EntityTeammate> {
         TeammateRenderer(RenderManager manager) {
-            super(manager, new ModelBiped(), 0.5F);
+            super(manager, new ModelPlayer(0.0F, true), 0.5F);
             addLayer(new LayerBipedArmor(this));
         }
         @Override protected ResourceLocation getEntityTexture(EntityTeammate entity) {
-            return new ResourceLocation("minecraft", "textures/entity/steve.png");
+            return new ResourceLocation(NpcMod.ID, "textures/entity/teammate.png");
         }
     }
 }

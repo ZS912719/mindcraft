@@ -1,6 +1,6 @@
 # Dregora game adapter — first implementation
 
-2026-10-07：新增独立的服务端可见 NPC 原型，保留下面记录的真实玩家客户端后端。NPC 提供 UUID 状态、独立背包和基础跟随／停止／指定位置撤退；尚未完成游戏内验证、模组技能战斗适配或 GUI。启用 `MINDCRAFT_BRIDGE_BACKEND=npc` 后禁用玩家动作及按键控制。架构调查、限制、协议和独立实例验证步骤见 [NPC foundation](NPC_FOUNDATION.md)。
+2026-10-07：新增独立的服务端可见 NPC 原型，保留下面记录的真实玩家客户端后端。NPC 提供 UUID 状态、独立背包和基础跟随／停止／指定位置撤退；已在独立实例完成基础显示、移动、取消和 UUID 重载验证，见 [NPC 实测报告](NPC_RUNTIME_TEST_REPORT.md)；模组技能战斗适配及 GUI 尚未完成。启用 `MINDCRAFT_BRIDGE_BACKEND=npc` 后禁用玩家动作及按键控制。架构调查、限制、协议和独立实例验证步骤见 [NPC foundation](NPC_FOUNDATION.md)。
 
 此目录提供独立的 Forge 1.12.2 客户端桥接模组，以及 Mindcraft 内的 Node.js 适配器。原版 Mineflayer 启动路径保持不变。本阶段不调用 DeepSeek，不启用模型生成代码，不安装模组到现有 Dregora。
 

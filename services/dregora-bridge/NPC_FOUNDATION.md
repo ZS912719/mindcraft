@@ -1,6 +1,6 @@
 # Visible NPC foundation
 
-Date: 2026-10-07. This is an experimental integrated-server backend, separate from the existing real-player client backend. It needs one game client and no local LLM. It has not yet been exercised in a running Dregora world. Compilation and unit tests do not establish in-game rendering, navigation or mod compatibility.
+Date: 2026-10-07. This is an experimental integrated-server backend, separate from the existing real-player client backend. It needs one game client and no local LLM. Basic rendering, flat-platform navigation, command cancellation and UUID persistence have now been exercised in an isolated Dregora world; see [runtime test report](NPC_RUNTIME_TEST_REPORT.md). Full mod compatibility remains unverified.
 
 ## Repository audit and reuse
 
@@ -27,7 +27,7 @@ Do not invoke player-only handlers with the owner to bypass requirements. Any la
 
 ## Implemented scope
 
-The same JAR now contains `mindcraft_dregora_bridge` and `mindcraft_dregora_npc`. The NPC entity is registered as `mindcraft_dregora_npc:teammate`, without natural spawning. It uses a biped renderer with the vanilla Steve texture and a visible name; rendering requires live verification. Common NPC classes do not reference Minecraft client classes. Dedicated-server and multiplayer operation are not validated or exposed by the prototype bridge.
+The same JAR now contains `mindcraft_dregora_bridge` and `mindcraft_dregora_npc`. The NPC entity is registered as `mindcraft_dregora_npc:teammate`, without natural spawning. It uses a slim-arm player model with an NPC-specific 64x64 skin and a visible name; independent limb textures and clothing overlays were verified in game. Common NPC classes do not reference Minecraft client classes. Dedicated-server and multiplayer operation are not validated or exposed by the prototype bridge.
 
 Each NPC has its own UUID, owner UUID, 27-slot backpack, vanilla living health and six vanilla hand/armor equipment slots. Entity NBT preserves UUID, owner, backpack and native equipment/health. Commands reset to hold on reload. Backpack contents drop on ordinary death when the game's mob-loot rules permit drops. Backpack UI, item transfer, native skills, combat and accessory behavior are not implemented; unsupported capabilities are returned explicitly.
 
@@ -41,7 +41,7 @@ Owner absence/death/spectator state/dimension departure cancels orders. There is
 
 ## Isolated test procedure
 
-Build from the repository using `services/dregora-bridge/build.ps1 -Offline`. The output is `build/libs/mindcraft-dregora-bridge-0.1.0.jar`. Install only in `Dregora AI Test`, with the game exited; do not install in the original instance. This development step has not installed the new JAR or altered the test save.
+Build from the repository using `services/dregora-bridge/build.ps1 -Offline`. The output is `build/libs/mindcraft-dregora-bridge-0.1.0.jar`. Install only in `Dregora AI Test`, with the game exited; do not install in the original instance. The live test installed the corrected JAR only in the isolated instance and created a separate Creative test world; the older DregoraRL test save was not opened.
 
 Start the test JVM with the existing private bridge token and both environment settings:
 
@@ -103,6 +103,6 @@ await adapter.command(npcUuid, 'retreat', {
 
 ## Next milestones
 
-Automated validation on 2026-10-07: 28 Node tests passed (22 existing, 6 NPC), 13 Java tests passed (9 existing, 4 NPC), offline build succeeded and tracked-file `git diff --check` passed. NPC tests cover bounded structured commands, unavailable owners, local range/arrival rules, stale sessions, UUID routing, unverified acknowledgments and uncertain transport recovery. Rendering, entity NBT round trips in a world, hazard avoidance and full mod lifecycle are still live-test obligations.
+Automated validation on 2026-10-07: 28 Node tests passed (22 existing, 6 NPC), 13 Java tests passed (9 existing, 4 NPC), offline build succeeded and tracked-file `git diff --check` passed. NPC tests cover bounded structured commands, unavailable owners, local range/arrival rules, stale sessions, UUID routing, unverified acknowledgments and uncertain transport recovery. Basic rendering and UUID/owner/health persistence were verified in the isolated world. Nonempty inventory persistence, hazard avoidance and full mod lifecycle remain live-test obligations.
 
-First perform the live checklist and correct rendering, persistence and navigation failures. Then implement tested equipment transfer and melee with explicit native-mechanism support; design NPC-owned skills/requirements without assigning owner skill data. Next address accessories, body health, ranged and right-click items individually. Add a game GUI sending the same bounded server commands with sender-derived ownership. Only after reliable deterministic execution should DeepSeek emit low-frequency structured tactical choices. Reinforcement learning remains out of scope.
+Extend the recorded live checks to nonempty inventory persistence, difficult terrain and owner death/dimension transitions. Then implement tested equipment transfer and melee with explicit native-mechanism support; design NPC-owned skills/requirements without assigning owner skill data. Next address accessories, body health, ranged and right-click items individually. Add a game GUI sending the same bounded server commands with sender-derived ownership. Only after reliable deterministic execution should DeepSeek emit low-frequency structured tactical choices. Reinforcement learning remains out of scope.
