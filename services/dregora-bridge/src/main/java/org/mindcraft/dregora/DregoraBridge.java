@@ -260,10 +260,13 @@ public final class DregoraBridge {
                 mc.playerController.attackEntity(mc.player, target);
                 mc.player.swingArm(EnumHand.MAIN_HAND);
             } else if (type.equals("use_item")) {
+                release(mc);
                 EnumHand hand = args.get("hand").getAsString().equals("off") ? EnumHand.OFF_HAND : EnumHand.MAIN_HAND;
                 if (mc.player.getHeldItem(hand).isEmpty()) return "empty_hand";
                 if (mc.playerController.processRightClick(mc.player, mc.world, hand) == net.minecraft.util.EnumActionResult.FAIL)
                     return "interaction_failed";
+                // Minecraft cancels active item use unless the use key remains held.
+                KeyBinding.setKeyBindState(mc.gameSettings.keyBindUseItem.getKeyCode(), true);
                 controlTicks = args.get("ticks").getAsInt();
             } else if (type.equals("interact_block")) {
                 RayTraceResult hit = mc.objectMouseOver;
@@ -279,7 +282,8 @@ public final class DregoraBridge {
     private void release(Minecraft mc) {
         for (KeyBinding key : new KeyBinding[] {mc.gameSettings.keyBindForward, mc.gameSettings.keyBindBack,
             mc.gameSettings.keyBindLeft, mc.gameSettings.keyBindRight, mc.gameSettings.keyBindJump,
-            mc.gameSettings.keyBindSneak, mc.gameSettings.keyBindSprint}) KeyBinding.setKeyBindState(key.getKeyCode(), false);
+            mc.gameSettings.keyBindSneak, mc.gameSettings.keyBindSprint,
+            mc.gameSettings.keyBindUseItem}) KeyBinding.setKeyBindState(key.getKeyCode(), false);
         if (mc.player != null && mc.playerController != null && mc.player.isHandActive()) mc.playerController.onStoppedUsingItem(mc.player);
         controlTicks = 0;
     }
