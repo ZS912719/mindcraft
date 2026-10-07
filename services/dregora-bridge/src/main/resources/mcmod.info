@@ -6,5 +6,13 @@
     "version": "0.1.0",
     "mcversion": "1.12.2",
     "authorList": ["Mindcraft Dregora adapter contributors"]
+  },
+  {
+    "modid": "mindcraft_dregora_npc",
+    "name": "Mindcraft Dregora NPC",
+    "description": "Experimental visible server-driven teammate with local movement commands.",
+    "version": "0.1.0",
+    "mcversion": "1.12.2",
+    "authorList": ["Mindcraft Dregora adapter contributors"]
   }
 ]

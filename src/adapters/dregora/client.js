@@ -67,7 +67,9 @@ export class DregoraAdapter {
 
     validateResult(result, id) {
         if (!result || result.id !== id || !['pending', 'completed', 'rejected'].includes(result.status)
-            || typeof result.reason !== 'string' || result.effectVerified !== false) throw new BridgeError('invalid_action_result');
+            || typeof result.reason !== 'string' || typeof result.effectVerified !== 'boolean'
+            || (result.effectVerified && (result.status !== 'completed' || result.verification?.effectVerified !== true
+                || result.verification?.status !== 'observed_change'))) throw new BridgeError('invalid_action_result');
         return result;
     }
 
@@ -77,7 +79,7 @@ export class DregoraAdapter {
     }
 
     async execute(type, args = {}, options = {}) {
-        const timeoutMs = options.timeoutMs ?? 3500;
+        const timeoutMs = options.timeoutMs ?? 8000;
         if (!Number.isFinite(timeoutMs) || timeoutMs < 100 || timeoutMs > 30000) throw new BridgeError('invalid_timeout');
         let result = await this.submit(type, args, options);
         const deadline = Date.now() + timeoutMs;

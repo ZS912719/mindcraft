@@ -3,5 +3,6 @@ build/
 run/
 mdk/
 mdk.zip
+logs/
 .toolchain/
 .gradle-user/

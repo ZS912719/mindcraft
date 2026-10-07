@@ -135,7 +135,7 @@ export class CombatController {
         }
         const type = decision.type === 'retreat' ? 'move' : decision.type === 'shot' ? 'use_item' : decision.type;
         const result = await this.adapter.execute(type, decision.args, { session });
-        // Completion acknowledges dispatch. Damage, projectile impact and buffs need later observations.
-        return { decision, result, effectVerified: false };
+        // Preserve bridge observation evidence; item use does not establish projectile impact.
+        return { decision, result, effectVerified: result.effectVerified === true };
     }
 }

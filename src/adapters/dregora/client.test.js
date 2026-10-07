@@ -136,3 +136,36 @@ test('queries bounded catalog pages and rejects invalid page sizes', async t => 
     assert.equal((await adapter.getCatalog('recipes', { offset: 5, limit: 10 })).total, 20);
     await assert.rejects(adapter.getCatalog('recipes', { limit: 1000 }), { code: 'invalid_catalog_page' });
 });
+
+test('retains native compound requirement failures without retrying', async t => {
+    let posts = 0;
+    const eligibility = { allowed: false, subjects: [{ role: 'item', missing: [{ type: 'ORRequirement',
+        achieved: false, children: [{ type: 'SkillRequirement', skill: 'reskillable:magic', currentLevel: 1, requiredLevel: 8 },
+            { type: 'AdvancementRequirement', advancement: 'minecraft:story/smelt_iron', achieved: false }] }] }] };
+    const adapter = await fixture(t, async (request, response) => {
+        if (request.method === 'GET') return reply(response, state());
+        posts++;
+        let body = '';
+        for await (const part of request) body += part;
+        reply(response, { id: JSON.parse(body).id, status: 'rejected', reason: 'requirements_not_met', effectVerified: false, eligibility });
+    });
+    const result = await adapter.execute('use_item', { hand: 'main', ticks: 40 });
+    assert.deepEqual(result.eligibility, eligibility);
+    assert.equal(posts, 1);
+});
+
+test('requires verification evidence for a confirmed action result', () => {
+    const adapter = new DregoraAdapter({ token });
+    const result = { id: 'evidence', status: 'completed', reason: 'dispatched', effectVerified: true };
+    assert.throws(() => adapter.validateResult(result, 'evidence'), { code: 'invalid_action_result' });
+    result.verification = { status: 'observed_change', effectVerified: true, source: 'integrated_server', changes: ['targetHealth'] };
+    assert.equal(adapter.validateResult(result, 'evidence').effectVerified, true);
+    assert.throws(() => adapter.validateResult({ ...result, status: 'pending' }, 'evidence'), { code: 'invalid_action_result' });
+});
+
+test('bounds survival armor slots and test-only runtime requirement fixtures', () => {
+    assert.deepEqual(validateAction('equip_armor', { slot: 35 }), { slot: 35 });
+    assert.throws(() => validateAction('equip_armor', { slot: 36 }));
+    assert.throws(() => validateAction('test_lock', { slot: 0, requirements: [] }));
+    assert.throws(() => validateAction('test_lock', { slot: 0, requirements: Array(9).fill('none') }));
+});

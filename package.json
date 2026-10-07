@@ -43,7 +43,7 @@
     },
     "scripts": {
         "dregora:inspect": "node services/dregora-bridge/inspect.js",
-        "dregora:test": "node --test src/adapters/dregora/client.test.js src/adapters/dregora/combat.test.js",
+        "dregora:test": "node --test src/adapters/dregora/client.test.js src/adapters/dregora/combat.test.js src/adapters/dregora/npc.test.js",
         "postinstall": "patch-package",
         "start": "node main.js",
         "reinstall": "npm run clean:modules && npm install",

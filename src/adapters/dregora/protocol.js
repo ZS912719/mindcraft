@@ -7,7 +7,10 @@ export const ACTIONS = Object.freeze({
     attack: { entityId: 'entityId', uuid: 'uuid' },
     use_item: { hand: 'hand', ticks: 'ticks100' },
     interact_block: {},
+    equip_armor: { slot: 'inventorySlot' },
     test_command: { command: 'testCommand' },
+    test_lock: { slot: 'inventorySlot', requirements: 'requirements' },
+    test_advancement: { granted: 'boolean' },
 });
 
 export class BridgeError extends Error {
@@ -29,13 +32,15 @@ export function validateAction(type, args = {}) {
         const value = args[key];
         if (rule.endsWith('?') && value === undefined) continue;
         let valid;
-        if (rule === 'boolean?') valid = typeof value === 'boolean';
+        if (rule === 'boolean?' || rule === 'boolean') valid = typeof value === 'boolean';
         else if (rule === 'hand') valid = value === 'main' || value === 'off';
         else if (rule === 'uuid') valid = typeof value === 'string' && uuidPattern.test(value);
+        else if (rule === 'requirements') valid = Array.isArray(value) && value.length >= 1 && value.length <= 8
+            && value.every(expression => typeof expression === 'string' && expression.length <= 256);
         else if (rule === 'testCommand') valid = typeof value === 'string' && value.length <= 2048
-            && !/[\r\n]/.test(value) && /^(give|replaceitem|summon|effect|tp|kill|gamemode|time|weather|difficulty|gamerule|reskillable|fill) .+$/.test(value);
+            && !/[\r\n]/.test(value) && /^(give|replaceitem|summon|effect|tp|kill|gamemode|time|weather|difficulty|gamerule|reskillable|fill|advancement) .+$/.test(value);
         else {
-            const bounds = { ticks20: [1, 20], ticks100: [1, 100], yaw: [-360, 360], pitch: [-90, 90], slot: [0, 8], entityId: [0, 2147483647] }[rule];
+            const bounds = { ticks20: [1, 20], ticks100: [1, 100], yaw: [-360, 360], pitch: [-90, 90], slot: [0, 8], inventorySlot: [0, 35], entityId: [0, 2147483647] }[rule];
             valid = typeof value === 'number' && Number.isFinite(value) && value >= bounds[0] && value <= bounds[1];
             if (rule !== 'yaw' && rule !== 'pitch') valid &&= Number.isInteger(value);
         }

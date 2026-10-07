@@ -37,6 +37,11 @@ public final class DregoraBridge {
     private int snapshotTicks;
     private boolean releaseRequested;
     private String token;
+    private final Map<String, JsonObject> eligibility = new HashMap<>();
+    private final Map<String, JsonObject> before = new HashMap<>();
+    private final Map<String, JsonObject> verifying = new HashMap<>();
+    private String activeAction;
+    private final boolean npcBackend = "npc".equals(System.getenv("MINDCRAFT_BRIDGE_BACKEND"));
 
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) throws IOException {
@@ -75,6 +80,39 @@ public final class DregoraBridge {
             }
             String path = exchange.getRequestURI().getPath();
             String method = exchange.getRequestMethod();
+            if ((method.equals("GET") && path.equals("/v1/npcs"))
+                || (method.equals("POST") && path.equals("/v1/npcs/commands"))) {
+                if (!npcBackend) { reply(exchange, 409, error("npc_backend_required")); return; }
+                if (exchange.getRequestHeaders().getFirst("Origin") != null) {
+                    reply(exchange, 403, error("browser_origin_not_allowed")); return;
+                }
+                JsonObject request = method.equals("POST") ? new JsonParser().parse(readBody(exchange)).getAsJsonObject() : null;
+                if (request != null) org.mindcraft.dregora.npc.NpcService.validate(request);
+                CompletableFuture<JsonObject> future = new CompletableFuture<>();
+                long deadline = System.currentTimeMillis() + 2000;
+                Minecraft.getMinecraft().addScheduledTask(() -> {
+                    Minecraft mc = Minecraft.getMinecraft();
+                    if (mc.player == null || mc.getIntegratedServer() == null) {
+                        future.completeExceptionally(new IllegalStateException("singleplayer_required")); return;
+                    }
+                    net.minecraft.server.integrated.IntegratedServer integrated = mc.getIntegratedServer();
+                    UUID owner = mc.player.getUniqueID();
+                    integrated.addScheduledTask(() -> {
+                        try {
+                            future.complete(request == null ? org.mindcraft.dregora.npc.NpcService.state(integrated, owner)
+                                : org.mindcraft.dregora.npc.NpcService.execute(integrated, owner, request, deadline));
+                        } catch (Exception exception) { future.completeExceptionally(exception); }
+                    });
+                });
+                try { reply(exchange, 200, future.get(2, TimeUnit.SECONDS)); }
+                catch (ExecutionException exception) {
+                    Throwable cause = exception.getCause();
+                    if (cause instanceof IllegalArgumentException || cause instanceof IllegalStateException)
+                        reply(exchange, 409, error(cause.getMessage()));
+                    else throw exception;
+                }
+                return;
+            }
             if (method.equals("GET") && path.equals("/v1/state")) reply(exchange, 200, state);
             else if (method.equals("GET") && path.equals("/v1/test/state")) {
                 if (!"1".equals(System.getenv("MINDCRAFT_BRIDGE_TEST_MODE"))) {
@@ -101,6 +139,7 @@ public final class DregoraBridge {
                     reply(exchange, result == null ? 404 : 200, result == null ? error("action_not_found") : result);
                 }
             } else if (method.equals("POST") && path.equals("/v1/actions")) {
+                if (npcBackend) { reply(exchange, 409, error("player_backend_disabled")); return; }
                 if (exchange.getRequestHeaders().getFirst("Origin") != null) {
                     reply(exchange, 403, error("browser_origin_not_allowed"));
                     return;
@@ -181,7 +220,7 @@ public final class DregoraBridge {
         if (!action.get("id").getAsString().matches("[A-Za-z0-9_-]{1,64}")) throw new IllegalArgumentException("invalid_action");
         UUID.fromString(action.get("session").getAsString());
         String type = action.get("type").getAsString();
-        if (!Arrays.asList("stop", "move", "look", "select_slot", "attack", "use_item", "interact_block", "test_command").contains(type))
+        if (!Arrays.asList("stop", "move", "look", "select_slot", "attack", "use_item", "interact_block", "equip_armor", "test_command", "test_lock", "test_advancement").contains(type))
             throw new IllegalArgumentException("unsupported_action");
         JsonObject args = action.has("args") ? action.getAsJsonObject("args") : new JsonObject();
         Set<String> allowed = new HashSet<>();
@@ -195,6 +234,7 @@ public final class DregoraBridge {
             allowed.addAll(Arrays.asList("yaw", "pitch"));
             finite(args, "yaw", -360, 360); finite(args, "pitch", -90, 90);
         } else if (type.equals("select_slot")) { allowed.add("slot"); integer(args, "slot", 0, 8); }
+        else if (type.equals("equip_armor")) { allowed.add("slot"); integer(args, "slot", 0, 35); }
         else if (type.equals("attack")) {
             allowed.addAll(Arrays.asList("entityId", "uuid"));
             integer(args, "entityId", 0, Integer.MAX_VALUE);
@@ -203,13 +243,24 @@ public final class DregoraBridge {
             allowed.addAll(Arrays.asList("hand", "ticks")); integer(args, "ticks", 1, 100);
             if (!args.has("hand") || !Arrays.asList("main", "off").contains(args.get("hand").getAsString()))
                 throw new IllegalArgumentException("invalid_hand");
+        } else if (type.equals("test_advancement")) {
+            allowed.add("granted");
+            if (!args.has("granted") || !args.get("granted").isJsonPrimitive() || !args.getAsJsonPrimitive("granted").isBoolean())
+                throw new IllegalArgumentException("invalid_advancement_fixture");
+        } else if (type.equals("test_lock")) {
+            allowed.addAll(Arrays.asList("slot", "requirements")); integer(args, "slot", 0, 35);
+            if (!args.has("requirements") || !args.get("requirements").isJsonArray()) throw new IllegalArgumentException("invalid_requirements");
+            JsonArray requirements = args.getAsJsonArray("requirements");
+            if (requirements.size() < 1 || requirements.size() > 8) throw new IllegalArgumentException("invalid_requirements");
+            for (JsonElement requirement : requirements) if (!requirement.isJsonPrimitive() || !requirement.getAsJsonPrimitive().isString()
+                || requirement.getAsString().length() > 256) throw new IllegalArgumentException("invalid_requirements");
         } else if (type.equals("test_command")) {
             allowed.add("command");
             if (!args.has("command") || !args.get("command").isJsonPrimitive()
                 || !args.getAsJsonPrimitive("command").isString()) throw new IllegalArgumentException("invalid_command");
             String command = args.get("command").getAsString();
             if (command.length() > 2048 || command.contains("\n") || command.contains("\r")
-                || !command.matches("(give|replaceitem|summon|effect|tp|kill|gamemode|time|weather|difficulty|gamerule|reskillable|fill) .+"))
+                || !command.matches("(give|replaceitem|summon|effect|tp|kill|gamemode|time|weather|difficulty|gamerule|reskillable|fill|advancement) .+"))
                 throw new IllegalArgumentException("invalid_command");
         }
         for (Map.Entry<String, JsonElement> field : args.entrySet()) if (!allowed.contains(field.getKey())) throw new IllegalArgumentException("unknown_argument");
@@ -232,6 +283,8 @@ public final class DregoraBridge {
 
     @SubscribeEvent
     public synchronized void tick(TickEvent.ClientTickEvent event) {
+        // NPC mode must never alter the human player's key bindings or camera.
+        if (npcBackend) return;
         if (event.phase != TickEvent.Phase.END) return;
         Minecraft mc = Minecraft.getMinecraft();
         int dimension = mc.player == null ? 0 : mc.player.dimension;
@@ -252,8 +305,41 @@ public final class DregoraBridge {
             if (!action.get("session").getAsString().equals(session)) reason = "stale_session";
             else if (System.currentTimeMillis() > action.get("deadline").getAsLong()) reason = "expired";
             else reason = execute(mc, action);
-            if (!reason.equals("server_pending"))
-                results.put(id, result(id, reason.equals("dispatched") || reason.equals("stopped") ? "completed" : "rejected", reason));
+            if (!reason.equals("server_pending")) {
+                JsonObject outcome = result(id, reason.equals("dispatched") || reason.equals("stopped") ? "completed" : "rejected", reason);
+                JsonObject gate = eligibility.remove(id);
+                if (gate != null) outcome.add("eligibility", gate);
+                JsonObject prior = before.remove(id);
+                if (reason.equals("dispatched") && prior != null) {
+                    outcome.addProperty("status", "pending"); outcome.addProperty("reason", "verifying_effect");
+                    action.add("before", prior);
+                    int ticks = action.get("type").getAsString().equals("use_item") ? action.getAsJsonObject("args").get("ticks").getAsInt() : 0;
+                    action.addProperty("verifyAt", System.currentTimeMillis() + ticks * 50L + 1000);
+                    verifying.put(id, action);
+                }
+                results.put(id, outcome);
+                if (!outcome.get("status").getAsString().equals("pending") && id.equals(activeAction)) activeAction = null;
+            }
+        }
+        for (String id : new ArrayList<>(verifying.keySet())) {
+            JsonObject action = verifying.get(id);
+            if (!action.get("session").getAsString().equals(session) || mc.player == null) {
+                verifying.remove(id); results.put(id, result(id, "rejected", "session_changed")); continue;
+            }
+            if (System.currentTimeMillis() < action.get("verifyAt").getAsLong()) continue;
+            verifying.remove(id);
+            if (mc.getIntegratedServer() != null) {
+                net.minecraft.server.integrated.IntegratedServer integrated = mc.getIntegratedServer();
+                UUID playerId = mc.player.getUniqueID();
+                integrated.addScheduledTask(() -> {
+                    JsonObject after = null;
+                    try {
+                        net.minecraft.entity.player.EntityPlayerMP player = integrated.getPlayerList().getPlayerByUUID(playerId);
+                        if (player != null) after = ActionObservation.read(player, action);
+                    } catch (Exception ignored) {}
+                    finishVerification(id, action, after);
+                });
+            } else finishVerification(id, action, ActionObservation.read(mc.player, action));
         }
         if (++snapshotTicks >= 5) {
             state = GameState.snapshot(mc, session);
@@ -268,6 +354,20 @@ public final class DregoraBridge {
         if (mc.player == null || mc.world == null || !mc.player.isEntityAlive()) return "not_alive";
         if (mc.currentScreen != null || mc.isGamePaused()) return "game_not_controllable";
         try {
+            String actionId = action.get("id").getAsString();
+            if (Arrays.asList("attack", "use_item", "interact_block", "equip_armor").contains(type)) {
+                if (activeAction != null && !activeAction.equals(actionId)) return "action_in_progress";
+                activeAction = actionId;
+            }
+            if (Arrays.asList("attack", "use_item", "interact_block", "equip_armor").contains(type) && !eligibility.containsKey(actionId))
+                return preflight(mc, action);
+            if (eligibility.containsKey(actionId)) {
+                JsonObject gate = eligibility.get(actionId);
+                if (!gate.get("allowed").getAsBoolean()) return gate.get("status").getAsString().equals("unknown")
+                    ? "requirements_unknown" : gate.get("status").getAsString().equals("changed")
+                    ? "preflight_subject_changed" : "requirements_not_met";
+                if (!gate.get("fingerprint").getAsString().equals(fingerprint(mc, action))) return "preflight_subject_changed";
+            }
             if (type.equals("move")) {
                 release(mc);
                 String[] names = {"forward", "back", "left", "right", "jump", "sneak", "sprint"};
@@ -293,25 +393,86 @@ public final class DregoraBridge {
                 // Minecraft cancels active item use unless the use key remains held.
                 KeyBinding.setKeyBindState(mc.gameSettings.keyBindUseItem.getKeyCode(), true);
                 controlTicks = args.get("ticks").getAsInt();
-            } else if (type.equals("test_command")) {
+            } else if (type.equals("equip_armor")) {
+                int slot = args.get("slot").getAsInt();
+                net.minecraft.item.ItemStack stack = mc.player.inventory.getStackInSlot(slot);
+                if (!(stack.getItem() instanceof net.minecraft.item.ItemArmor)) return "not_armor";
+                net.minecraft.inventory.EntityEquipmentSlot armorSlot = ((net.minecraft.item.ItemArmor) stack.getItem()).armorType;
+                if (!mc.player.getItemStackFromSlot(armorSlot).isEmpty()) return "armor_slot_occupied";
+                if (mc.player.openContainer != mc.player.inventoryContainer || !mc.player.inventory.getItemStack().isEmpty())
+                    return "inventory_not_ready";
+                mc.playerController.windowClick(mc.player.inventoryContainer.windowId, slot < 9 ? slot + 36 : slot, 0,
+                    net.minecraft.inventory.ClickType.QUICK_MOVE, mc.player);
+            } else if (type.equals("test_command") || type.equals("test_lock") || type.equals("test_advancement")) {
                 if (!"1".equals(System.getenv("MINDCRAFT_BRIDGE_TEST_MODE")) || mc.getIntegratedServer() == null)
                     return "test_mode_required";
                 net.minecraft.server.integrated.IntegratedServer integrated = mc.getIntegratedServer();
                 UUID playerId = mc.player.getUniqueID();
                 String actionSession = session, id = action.get("id").getAsString();
-                String command = args.get("command").getAsString();
+                String command = type.equals("test_command") ? args.get("command").getAsString() : "give";
                 integrated.addScheduledTask(() -> {
+                    synchronized (DregoraBridge.this) {
+                        if (!results.containsKey(id) || !results.get(id).get("status").getAsString().equals("pending")) return;
+                    }
                     String outcome = "test_command_failed";
+                    String diagnostic = null;
                     try {
                         net.minecraft.entity.player.EntityPlayerMP player = integrated.getPlayerList().getPlayerByUUID(playerId);
                         if (!session.equals(actionSession)) outcome = "stale_session";
                         else if (System.currentTimeMillis() > action.get("deadline").getAsLong()) outcome = "expired";
                         else if (player == null || !player.canUseCommand(2, command.split(" ")[0])) outcome = "cheats_required";
-                        else if (integrated.getCommandManager().executeCommand(player, command) > 0) outcome = "dispatched";
-                    } catch (Exception ignored) {}
+                        else if (type.equals("test_advancement")) {
+                            Class<?> holderType = Class.forName("codersafterdark.reskillable.api.data.RequirementHolder");
+                            net.minecraft.advancements.AdvancementList list = (net.minecraft.advancements.AdvancementList)
+                                holderType.getMethod("getAdvancementList").invoke(null);
+                            net.minecraft.util.ResourceLocation fixtureId = new net.minecraft.util.ResourceLocation("mindcraft", "test_requirements");
+                            if (list.getAdvancement(fixtureId) == null) {
+                                java.lang.reflect.Constructor<net.minecraft.advancements.Advancement.Builder> constructor =
+                                    net.minecraft.advancements.Advancement.Builder.class.getDeclaredConstructor(net.minecraft.util.ResourceLocation.class,
+                                        net.minecraft.advancements.DisplayInfo.class, net.minecraft.advancements.AdvancementRewards.class,
+                                        Map.class, String[][].class);
+                                constructor.setAccessible(true);
+                                net.minecraft.advancements.Criterion criterion = new net.minecraft.advancements.Criterion(
+                                    new net.minecraft.advancements.critereon.ImpossibleTrigger.Instance());
+                                // AdvancementList removes resolved entries from the supplied map.
+                                list.loadAdvancements(new HashMap<>(Collections.singletonMap(fixtureId, constructor.newInstance(null, null,
+                                    net.minecraft.advancements.AdvancementRewards.EMPTY, Collections.singletonMap("manual", criterion),
+                                    new String[][] {{"manual"}}))));
+                            }
+                            net.minecraft.advancements.Advancement advancement = list.getAdvancement(fixtureId);
+                            if (args.get("granted").getAsBoolean()) player.getAdvancements().grantCriterion(advancement, "manual");
+                            else player.getAdvancements().revokeCriterion(advancement, "manual");
+                            outcome = "dispatched";
+                        } else if (type.equals("test_lock")) {
+                            net.minecraft.item.ItemStack fixture = player.inventory.getStackInSlot(args.get("slot").getAsInt()).copy();
+                            if (!fixture.hasTagCompound() || !fixture.getTagCompound().hasKey("MindcraftRequirementFixture"))
+                                outcome = "fixture_marker_required";
+                            else {
+                                Class<?> holderType = Class.forName("codersafterdark.reskillable.api.data.RequirementHolder");
+                                JsonArray requirements = args.getAsJsonArray("requirements");
+                                String[] expressions = new String[requirements.size()];
+                                for (int i = 0; i < expressions.length; i++) expressions[i] = requirements.get(i).getAsString();
+                                Object holder = holderType.getMethod("fromStringList", String[].class).invoke(null, (Object) expressions);
+                                if ((Boolean) holderType.getMethod("hasNone").invoke(holder)) outcome = "invalid_fixture_requirements";
+                                else {
+                                    Class<?> keyType = Class.forName("codersafterdark.reskillable.api.data.LockKey");
+                                    net.minecraft.nbt.NBTTagCompound marker = new net.minecraft.nbt.NBTTagCompound();
+                                    marker.setTag("MindcraftRequirementFixture", fixture.getTagCompound().getTag("MindcraftRequirementFixture").copy());
+                                    Object key = Class.forName("codersafterdark.reskillable.api.data.GenericNBTLockKey")
+                                        .getConstructor(net.minecraft.nbt.NBTTagCompound.class).newInstance(marker);
+                                    Class.forName("codersafterdark.reskillable.base.LevelLockHandler")
+                                        .getMethod("addLockByKey", keyType, holderType).invoke(null, key, holder);
+                                    outcome = "dispatched";
+                                }
+                            }
+                        } else if (integrated.getCommandManager().executeCommand(player, command) > 0) outcome = "dispatched";
+                    } catch (Exception exception) { diagnostic = exception.getClass().getSimpleName() + ": " + exception.getMessage(); }
                     synchronized (DregoraBridge.this) {
                         if (!session.equals(actionSession)) outcome = "stale_session";
-                        results.put(id, result(id, outcome.equals("dispatched") ? "completed" : "rejected", outcome));
+                        if (!results.containsKey(id) || !results.get(id).get("status").getAsString().equals("pending")) return;
+                        JsonObject outcomeResult = result(id, outcome.equals("dispatched") ? "completed" : "rejected", outcome);
+                        if (diagnostic != null) outcomeResult.addProperty("diagnostic", diagnostic);
+                        results.put(id, outcomeResult);
                     }
                 });
                 return "server_pending";
@@ -324,6 +485,116 @@ public final class DregoraBridge {
             }
             return "dispatched";
         } catch (Exception exception) { release(mc); return "action_failed"; }
+    }
+
+    private String fingerprint(Minecraft mc, JsonObject action) {
+        String type = action.get("type").getAsString();
+        JsonObject args = action.has("args") ? action.getAsJsonObject("args") : new JsonObject();
+        net.minecraft.item.ItemStack stack = type.equals("equip_armor") ? mc.player.inventory.getStackInSlot(args.get("slot").getAsInt())
+            : mc.player.getHeldItem(type.equals("use_item") && args.get("hand").getAsString().equals("off") ? EnumHand.OFF_HAND : EnumHand.MAIN_HAND);
+        String value = stack.writeToNBT(new net.minecraft.nbt.NBTTagCompound()).toString();
+        if (type.equals("interact_block")) {
+            RayTraceResult hit = mc.objectMouseOver;
+            if (hit == null || hit.typeOfHit != RayTraceResult.Type.BLOCK) return value + "no_block";
+            value += hit.getBlockPos().toString() + hit.sideHit + Requirements.identity(Requirements.blockStack(mc.world, hit.getBlockPos()));
+            if (stack.isEmpty()) value += mc.player.getHeldItemOffhand().writeToNBT(new net.minecraft.nbt.NBTTagCompound());
+        }
+        return value;
+    }
+
+    private String preflight(Minecraft mc, JsonObject action) {
+        String type = action.get("type").getAsString(), id = action.get("id").getAsString();
+        JsonObject args = action.has("args") ? action.getAsJsonObject("args") : new JsonObject();
+        net.minecraft.item.ItemStack stack = (type.equals("equip_armor") ? mc.player.inventory.getStackInSlot(args.get("slot").getAsInt())
+            : mc.player.getHeldItem(type.equals("use_item") && args.get("hand").getAsString().equals("off") ? EnumHand.OFF_HAND : EnumHand.MAIN_HAND)).copy();
+        net.minecraft.item.ItemStack offhand = mc.player.getHeldItemOffhand().copy();
+        final int sourceSlot = type.equals("equip_armor") ? args.get("slot").getAsInt()
+            : type.equals("use_item") && args.get("hand").getAsString().equals("off") ? 40 : mc.player.inventory.currentItem;
+        net.minecraft.util.math.BlockPos blockPos = null;
+        if (type.equals("interact_block")) {
+            RayTraceResult hit = mc.objectMouseOver;
+            if (hit == null || hit.typeOfHit != RayTraceResult.Type.BLOCK) return "no_block_target";
+            blockPos = hit.getBlockPos();
+            JsonArray coordinates = new JsonArray(); coordinates.add(blockPos.getX()); coordinates.add(blockPos.getY()); coordinates.add(blockPos.getZ());
+            action.add("blockPos", coordinates);
+        }
+        final net.minecraft.util.math.BlockPos pos = blockPos;
+        final String signature = fingerprint(mc, action);
+        if (type.equals("equip_armor") && stack.getItem() instanceof net.minecraft.item.ItemArmor) {
+            action.addProperty("expectedArmorSlot", ((net.minecraft.item.ItemArmor) stack.getItem()).armorType.getName());
+            action.addProperty("expectedArmor", stack.writeToNBT(new net.minecraft.nbt.NBTTagCompound()).toString());
+        }
+        if (mc.getIntegratedServer() == null) {
+            JsonObject gate = check(mc.player, stack, offhand, pos); gate.addProperty("fingerprint", signature);
+            eligibility.put(id, gate); before.put(id, ActionObservation.read(mc.player, action));
+            return execute(mc, action);
+        }
+        net.minecraft.server.integrated.IntegratedServer integrated = mc.getIntegratedServer();
+        UUID playerId = mc.player.getUniqueID();
+        final int dimension = mc.player.dimension;
+        integrated.addScheduledTask(() -> {
+            JsonObject gate = new JsonObject(), observation = null;
+            try {
+                net.minecraft.entity.player.EntityPlayerMP player = integrated.getPlayerList().getPlayerByUUID(playerId);
+                if (player == null || player.dimension != dimension) throw new IllegalStateException("player_changed");
+                net.minecraft.item.ItemStack authoritative = player.inventory.getStackInSlot(sourceSlot).copy();
+                net.minecraft.item.ItemStack authoritativeOffhand = player.getHeldItemOffhand().copy();
+                if (type.equals("equip_armor") && action.has("expectedArmor"))
+                    action.addProperty("expectedArmor", authoritative.writeToNBT(new net.minecraft.nbt.NBTTagCompound()).toString());
+                gate = check(player, authoritative, authoritativeOffhand, pos);
+                if (!net.minecraft.item.ItemStack.areItemStacksEqual(stack, authoritative)
+                    || (pos != null && stack.isEmpty() && !net.minecraft.item.ItemStack.areItemStacksEqual(offhand, authoritativeOffhand))) {
+                    gate.addProperty("allowed", false); gate.addProperty("status", "changed");
+                }
+                observation = ActionObservation.read(player, action);
+            } catch (Exception exception) {
+                gate.addProperty("allowed", false); gate.addProperty("status", "unknown");
+            }
+            gate.addProperty("fingerprint", signature);
+            synchronized (DregoraBridge.this) {
+                if (!session.equals(action.get("session").getAsString()) || !results.containsKey(id)
+                    || !results.get(id).get("status").getAsString().equals("pending")) return;
+                eligibility.put(id, gate);
+                if (observation != null) before.put(id, observation);
+                queue.add(action);
+            }
+        });
+        return "server_pending";
+    }
+
+    private static JsonObject check(net.minecraft.entity.player.EntityPlayer player, net.minecraft.item.ItemStack stack,
+        net.minecraft.item.ItemStack offhand, net.minecraft.util.math.BlockPos pos) {
+        JsonObject gate = new JsonObject(); JsonArray subjects = new JsonArray();
+        JsonObject item = Requirements.read(player, stack, true); item.addProperty("role", "item"); subjects.add(item);
+        if (pos != null) {
+            if (stack.isEmpty()) {
+                JsonObject other = Requirements.read(player, offhand, true); other.addProperty("role", "offhand_fallback"); subjects.add(other);
+            }
+            JsonObject block = Requirements.read(player, Requirements.blockStack(player.world, pos), true);
+            block.addProperty("role", "block"); subjects.add(block);
+        }
+        boolean allowed = true, unknown = false;
+        for (JsonElement subject : subjects) {
+            allowed &= subject.getAsJsonObject().get("allowed").getAsBoolean();
+            unknown |= subject.getAsJsonObject().get("status").getAsString().equals("unknown");
+        }
+        gate.add("subjects", subjects); gate.addProperty("allowed", allowed);
+        gate.addProperty("status", unknown ? "unknown" : "available"); return gate;
+    }
+
+    private synchronized void finishVerification(String id, JsonObject action, JsonObject after) {
+        JsonObject outcome = results.get(id);
+        if (outcome == null || !outcome.get("status").getAsString().equals("pending")) return;
+        if (id.equals(activeAction)) activeAction = null;
+        if (!session.equals(action.get("session").getAsString())) { results.put(id, result(id, "rejected", "session_changed")); return; }
+        outcome.addProperty("status", "completed"); outcome.addProperty("reason", "dispatched");
+        if (after != null && after.get("dimension").equals(action.getAsJsonObject("before").get("dimension"))) {
+            JsonObject verification = ActionObservation.compare(action.getAsJsonObject("before"), after, action.get("type").getAsString());
+            outcome.add("verification", verification); outcome.add("effectVerified", verification.get("effectVerified"));
+        } else {
+            JsonObject verification = new JsonObject(); verification.addProperty("status", "unavailable");
+            outcome.add("verification", verification);
+        }
     }
 
     private void release(Minecraft mc) {
@@ -340,6 +611,10 @@ public final class DregoraBridge {
             JsonObject action = queue.remove();
             results.put(action.get("id").getAsString(), result(action.get("id").getAsString(), "rejected", reason));
         }
+        for (Map.Entry<String, JsonObject> entry : results.entrySet())
+            if (entry.getValue().get("status").getAsString().equals("pending"))
+                entry.setValue(result(entry.getKey(), "rejected", reason));
+        eligibility.clear(); before.clear(); verifying.clear(); activeAction = null;
     }
 
     private static JsonObject result(String id, String status, String reason) {

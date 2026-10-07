@@ -1,5 +1,7 @@
 # Dregora game adapter — first implementation
 
+2026-10-07：新增独立的服务端可见 NPC 原型，保留下面记录的真实玩家客户端后端。NPC 提供 UUID 状态、独立背包和基础跟随／停止／指定位置撤退；尚未完成游戏内验证、模组技能战斗适配或 GUI。启用 `MINDCRAFT_BRIDGE_BACKEND=npc` 后禁用玩家动作及按键控制。架构调查、限制、协议和独立实例验证步骤见 [NPC foundation](NPC_FOUNDATION.md)。
+
 此目录提供独立的 Forge 1.12.2 客户端桥接模组，以及 Mindcraft 内的 Node.js 适配器。原版 Mineflayer 启动路径保持不变。本阶段不调用 DeepSeek，不启用模型生成代码，不安装模组到现有 Dregora。
 
 ## 当前范围
@@ -61,6 +63,7 @@ Node.js 入口为 `src/adapters/dregora/client.js` 中的 `DregoraAdapter`，提
 | `attack` | `entityId` 和 `uuid`；目标需存活、被当前准星命中、在 ReachFix 实际距离内，且攻击冷却已恢复；安装 RLCombat 时调用其攻击入口 |
 | `use_item` | `hand` 为 `main/off`，`ticks` 1–100；到期停止持续使用物品 |
 | `interact_block` | 无参数；调用当前视线目标方块的主手交互 |
+| `equip_armor` | `slot` 0–35；通过生存背包的原生快捷移动穿戴，目标防具槽必须为空 |
 | `test_command` | 默认关闭；仅 `MINDCRAFT_BRIDGE_TEST_MODE=1`、单人服务器及作弊权限同时满足时可用；只接受限定的单条游戏指令 |
 
 近战距离来自当前手持装备的有效属性，品质、附魔和其他模组属性仍由游戏计算。范围依据眼睛到准星命中点的距离，不能用玩家到实体中心的距离直接替代。兼容读取失败会报告未知并拒绝攻击，避免绕过模组机制。服务器仍负责技能、装备和交互限制。
@@ -77,7 +80,21 @@ Node.js 入口为 `src/adapters/dregora/client.js` 中的 `DregoraAdapter`，提
 
 动作只允许游戏线程执行，排队超过 2 秒过期。重新登录、重生、切换世界或维度会更换会话并取消旧任务。短时移动到期释放控制，菜单或死亡也会释放。最多排队 32 个动作，保留最近 256 个结果；同一个动作 ID 不重复执行，因此只应使用同一 ID 恢复同一个请求。
 
-`completed/dispatched` 仅表示已经交给游戏执行，所有结果当前均包含 `effectVerified: false`。饮水是否增加口渴值、攻击是否造成伤害、配方是否允许执行，需要后续控制器通过新快照验证。客户端配方表不保证完整表达 CraftTweaker 的自定义逻辑、配方形状、NBT 条件或技能限制，所以配方条目标记为 `executable: false`。
+`completed/dispatched` 表示动作已交给游戏执行。攻击、物品使用、方块交互和穿甲会先返回 `pending/verifying_effect`，随后返回 `verification` 及 `effectVerified`。默认轮询等待上限为 8 秒。单人游戏读取服务端动作前后的目标生命值、实际装备、效果、方块和容器窗口；多人游戏只能读取同步的客户端状态，并标记 `source: client_synced`。
+
+攻击只有观察到指定目标生命值下降才确认；穿甲必须观察到请求的防具进入对应槽位；方块交互必须观察到方块变化或容器打开。物品使用只确认手持物品或药水效果的状态变化，不能将其解释为远程命中。无关背包掉落物拾取不算使用成功。没有观察到相应变化时返回 `unconfirmed`，`effectVerified: false`；读取失败返回 `unavailable`。并发的第二个此类动作返回 `action_in_progress`。`stop` 会取消待检查或待验证动作。状态变化仍可能受环境或玩家手动操作影响，不能当作严格的因果证明；未加载目标、持续格挡、特殊模组效果等也可能需要专门的验证器。
+
+客户端配方表不保证完整表达 CraftTweaker 的自定义逻辑、配方形状、NBT 条件或技能限制，所以配方条目标记为 `executable: false`。
+
+### Reskillable 运行时资格
+
+资格来自当前 Reskillable 的 `LevelLockHandler.getSkillLock(ItemStack)`、`PlayerData.matchStats` 和 `PlayerData.requirementAchieved`，不读取配置文件推算等级，也不在适配器里硬编码物品门槛。实际物品元数据、NBT、模组范围锁和动态注册的要求均由原生接口匹配。方块按原生交互处理构造堆栈：方块元数据、无物品形式时的回退堆栈、方块实体原始 NBT；空主手交互还检查副手回退物品。
+
+`/v1/state` 的非空背包物品、主副手 `eligibility` 和 `targetBlock.eligibility` 提供同步客户端预览。真正动作会调用原生要求缓存的 `forceClear` 后重新检查，避免沿用进度撤销或自定义条件变化前的资格：单人模式调度到服务端线程，读取服务端实际物品和玩家要求；客户端与服务端物品不一致或检查后物品／目标变化会返回 `preflight_subject_changed`。多人模式使用同步客户端数据，最终仍由远端服务器执行原生限制。
+
+动作结果中的 `eligibility.subjects` 区分 `item`、`block` 和 `offhand_fallback`，包含完整 `requirements`、缺失的 `missing`、`requirementsMet`、`allowed`、`source` 和创造模式 `bypass`。技能叶子包含 `skill/currentLevel/requiredLevel`；进度包含 `advancement/resolved/achieved`；特质和自定义要求保留原生类型及说明。AND／OR／NOT 等保留 `children` 树，`missing` 返回未满足的完整顶层表达式，不能把 OR／NOT 的叶子平铺成全部必需条件。无法读取时拒绝动作并返回 `requirements_unknown`；明确不达标时返回 `requirements_not_met`。
+
+隔离测试可使用 `test_lock {slot, requirements}` 为带 `MindcraftRequirementFixture` NBT 标记的物品注册临时原生 NBT 条件；表达式由 Reskillable 解析。`test_advancement {granted}` 仅注册／切换固定的 `mindcraft:test_requirements` 进度，定义只存在于测试 JVM 中，用于整合包禁用原版进度时的验证。这两项与 `test_command` 一样要求显式测试模式、单人服务器和作弊权限，不修改整合包配置文件，生产启动默认不可用。
 
 HTTP 超时后不能假定动作没有执行。错误中的 `actionId` 可用于查询；不要生成新 ID 自动重发。模型层不得直接绕过这些边界。
 

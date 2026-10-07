@@ -63,8 +63,10 @@ final class GameState {
         });
         out.add("effects", effects);
         JsonArray actions = new JsonArray();
-        for (String action : new String[] {"stop", "move", "look", "select_slot", "attack", "use_item", "interact_block"}) actions.add(action);
-        if ("1".equals(System.getenv("MINDCRAFT_BRIDGE_TEST_MODE")) && mc.getIntegratedServer() != null) actions.add("test_command");
+        for (String action : new String[] {"stop", "move", "look", "select_slot", "attack", "use_item", "interact_block", "equip_armor"}) actions.add(action);
+        if ("1".equals(System.getenv("MINDCRAFT_BRIDGE_TEST_MODE")) && mc.getIntegratedServer() != null) {
+            actions.add("test_command"); actions.add("test_lock"); actions.add("test_advancement");
+        }
         out.add("supportedActions", actions);
         JsonObject position = new JsonObject();
         position.addProperty("x", mc.player.posX);
@@ -76,6 +78,8 @@ final class GameState {
         JsonArray inventory = new JsonArray();
         for (int i = 0; i < mc.player.inventory.getSizeInventory(); i++) {
             JsonObject item = stack(mc.player.inventory.getStackInSlot(i));
+            if (!mc.player.inventory.getStackInSlot(i).isEmpty())
+                item.add("eligibility", Requirements.read(mc.player, mc.player.inventory.getStackInSlot(i)));
             item.addProperty("slot", i);
             inventory.add(item);
         }
@@ -134,9 +138,14 @@ final class GameState {
             block.addProperty("x", hit.getBlockPos().getX());
             block.addProperty("y", hit.getBlockPos().getY());
             block.addProperty("z", hit.getBlockPos().getZ());
+            block.add("eligibility", Requirements.read(mc.player, Requirements.blockStack(mc.world, hit.getBlockPos())));
             out.add("targetBlock", block);
         }
         out.add("mods", ModState.read(mc.player));
+        JsonObject eligibility = new JsonObject();
+        eligibility.add("mainhand", Requirements.read(mc.player, mc.player.getHeldItemMainhand()));
+        eligibility.add("offhand", Requirements.read(mc.player, mc.player.getHeldItemOffhand()));
+        out.add("eligibility", eligibility);
         return out;
     }
 
