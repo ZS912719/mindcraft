@@ -7,6 +7,7 @@ export const ACTIONS = Object.freeze({
     attack: { entityId: 'entityId', uuid: 'uuid' },
     use_item: { hand: 'hand', ticks: 'ticks100' },
     interact_block: {},
+    test_command: { command: 'testCommand' },
 });
 
 export class BridgeError extends Error {
@@ -31,6 +32,8 @@ export function validateAction(type, args = {}) {
         if (rule === 'boolean?') valid = typeof value === 'boolean';
         else if (rule === 'hand') valid = value === 'main' || value === 'off';
         else if (rule === 'uuid') valid = typeof value === 'string' && uuidPattern.test(value);
+        else if (rule === 'testCommand') valid = typeof value === 'string' && value.length <= 2048
+            && !/[\r\n]/.test(value) && /^(give|replaceitem|summon|effect|tp|kill|gamemode|time|weather|difficulty|gamerule|reskillable|fill) .+$/.test(value);
         else {
             const bounds = { ticks20: [1, 20], ticks100: [1, 100], yaw: [-360, 360], pitch: [-90, 90], slot: [0, 8], entityId: [0, 2147483647] }[rule];
             valid = typeof value === 'number' && Number.isFinite(value) && value >= bounds[0] && value <= bounds[1];

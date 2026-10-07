@@ -76,6 +76,25 @@ public final class DregoraBridge {
             String path = exchange.getRequestURI().getPath();
             String method = exchange.getRequestMethod();
             if (method.equals("GET") && path.equals("/v1/state")) reply(exchange, 200, state);
+            else if (method.equals("GET") && path.equals("/v1/test/state")) {
+                if (!"1".equals(System.getenv("MINDCRAFT_BRIDGE_TEST_MODE"))) {
+                    reply(exchange, 403, error("test_mode_required")); return;
+                }
+                CompletableFuture<JsonObject> future = new CompletableFuture<>();
+                Minecraft.getMinecraft().addScheduledTask(() -> {
+                    Minecraft mc = Minecraft.getMinecraft();
+                    if (mc.player == null || mc.getIntegratedServer() == null) {
+                        future.completeExceptionally(new IllegalStateException("singleplayer_required")); return;
+                    }
+                    net.minecraft.server.integrated.IntegratedServer integrated = mc.getIntegratedServer();
+                    UUID playerId = mc.player.getUniqueID();
+                    integrated.addScheduledTask(() -> {
+                        try { future.complete(TestState.read(integrated, playerId)); }
+                        catch (Exception exception) { future.completeExceptionally(exception); }
+                    });
+                });
+                reply(exchange, 200, future.get(2, TimeUnit.SECONDS));
+            }
             else if (method.equals("GET") && path.startsWith("/v1/actions/")) {
                 synchronized (this) {
                     JsonObject result = results.get(path.substring("/v1/actions/".length()));
@@ -162,7 +181,7 @@ public final class DregoraBridge {
         if (!action.get("id").getAsString().matches("[A-Za-z0-9_-]{1,64}")) throw new IllegalArgumentException("invalid_action");
         UUID.fromString(action.get("session").getAsString());
         String type = action.get("type").getAsString();
-        if (!Arrays.asList("stop", "move", "look", "select_slot", "attack", "use_item", "interact_block").contains(type))
+        if (!Arrays.asList("stop", "move", "look", "select_slot", "attack", "use_item", "interact_block", "test_command").contains(type))
             throw new IllegalArgumentException("unsupported_action");
         JsonObject args = action.has("args") ? action.getAsJsonObject("args") : new JsonObject();
         Set<String> allowed = new HashSet<>();
@@ -184,6 +203,14 @@ public final class DregoraBridge {
             allowed.addAll(Arrays.asList("hand", "ticks")); integer(args, "ticks", 1, 100);
             if (!args.has("hand") || !Arrays.asList("main", "off").contains(args.get("hand").getAsString()))
                 throw new IllegalArgumentException("invalid_hand");
+        } else if (type.equals("test_command")) {
+            allowed.add("command");
+            if (!args.has("command") || !args.get("command").isJsonPrimitive()
+                || !args.getAsJsonPrimitive("command").isString()) throw new IllegalArgumentException("invalid_command");
+            String command = args.get("command").getAsString();
+            if (command.length() > 2048 || command.contains("\n") || command.contains("\r")
+                || !command.matches("(give|replaceitem|summon|effect|tp|kill|gamemode|time|weather|difficulty|gamerule|reskillable|fill) .+"))
+                throw new IllegalArgumentException("invalid_command");
         }
         for (Map.Entry<String, JsonElement> field : args.entrySet()) if (!allowed.contains(field.getKey())) throw new IllegalArgumentException("unknown_argument");
         for (Map.Entry<String, JsonElement> field : action.entrySet()) if (!Arrays.asList("id", "session", "type", "args").contains(field.getKey()))
@@ -225,7 +252,8 @@ public final class DregoraBridge {
             if (!action.get("session").getAsString().equals(session)) reason = "stale_session";
             else if (System.currentTimeMillis() > action.get("deadline").getAsLong()) reason = "expired";
             else reason = execute(mc, action);
-            results.put(id, result(id, reason.equals("dispatched") || reason.equals("stopped") ? "completed" : "rejected", reason));
+            if (!reason.equals("server_pending"))
+                results.put(id, result(id, reason.equals("dispatched") || reason.equals("stopped") ? "completed" : "rejected", reason));
         }
         if (++snapshotTicks >= 5) {
             state = GameState.snapshot(mc, session);
@@ -255,10 +283,7 @@ public final class DregoraBridge {
                 Entity target = mc.world.getEntityByID(args.get("entityId").getAsInt());
                 if (!(target instanceof EntityLivingBase) || target == mc.player || !target.isEntityAlive()
                     || !target.getUniqueID().toString().equals(args.get("uuid").getAsString())) return "invalid_target";
-                if (mc.player.getDistance(target) > 3 || !mc.player.canEntityBeSeen(target)) return "target_unreachable";
-                if (mc.player.getCooledAttackStrength(0) < 1) return "attack_cooldown";
-                mc.playerController.attackEntity(mc.player, target);
-                mc.player.swingArm(EnumHand.MAIN_HAND);
+                return CombatState.attack(mc, target);
             } else if (type.equals("use_item")) {
                 release(mc);
                 EnumHand hand = args.get("hand").getAsString().equals("off") ? EnumHand.OFF_HAND : EnumHand.MAIN_HAND;
@@ -268,6 +293,28 @@ public final class DregoraBridge {
                 // Minecraft cancels active item use unless the use key remains held.
                 KeyBinding.setKeyBindState(mc.gameSettings.keyBindUseItem.getKeyCode(), true);
                 controlTicks = args.get("ticks").getAsInt();
+            } else if (type.equals("test_command")) {
+                if (!"1".equals(System.getenv("MINDCRAFT_BRIDGE_TEST_MODE")) || mc.getIntegratedServer() == null)
+                    return "test_mode_required";
+                net.minecraft.server.integrated.IntegratedServer integrated = mc.getIntegratedServer();
+                UUID playerId = mc.player.getUniqueID();
+                String actionSession = session, id = action.get("id").getAsString();
+                String command = args.get("command").getAsString();
+                integrated.addScheduledTask(() -> {
+                    String outcome = "test_command_failed";
+                    try {
+                        net.minecraft.entity.player.EntityPlayerMP player = integrated.getPlayerList().getPlayerByUUID(playerId);
+                        if (!session.equals(actionSession)) outcome = "stale_session";
+                        else if (System.currentTimeMillis() > action.get("deadline").getAsLong()) outcome = "expired";
+                        else if (player == null || !player.canUseCommand(2, command.split(" ")[0])) outcome = "cheats_required";
+                        else if (integrated.getCommandManager().executeCommand(player, command) > 0) outcome = "dispatched";
+                    } catch (Exception ignored) {}
+                    synchronized (DregoraBridge.this) {
+                        if (!session.equals(actionSession)) outcome = "stale_session";
+                        results.put(id, result(id, outcome.equals("dispatched") ? "completed" : "rejected", outcome));
+                    }
+                });
+                return "server_pending";
             } else if (type.equals("interact_block")) {
                 RayTraceResult hit = mc.objectMouseOver;
                 if (hit == null || hit.typeOfHit != RayTraceResult.Type.BLOCK) return "no_block_target";

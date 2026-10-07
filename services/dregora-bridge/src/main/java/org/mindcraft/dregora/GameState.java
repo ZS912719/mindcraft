@@ -28,6 +28,7 @@ final class GameState {
             out.addProperty("maxDamage", stack.getMaxDamage());
             out.addProperty("name", stack.getDisplayName());
             out.addProperty("nbt", stack.hasTagCompound() ? stack.getTagCompound().toString() : null);
+            out.add("profile", ItemProfile.read(stack));
         }
         return out;
     }
@@ -49,8 +50,21 @@ final class GameState {
         out.addProperty("burning", mc.player.isBurning());
         out.addProperty("inWater", mc.player.isInWater());
         out.addProperty("guiOpen", mc.currentScreen != null);
+        out.add("combat", CombatState.read(mc));
+        out.addProperty("eyeHeight", mc.player.getEyeHeight());
+        out.addProperty("armor", mc.player.getTotalArmorValue());
+        JsonArray effects = new JsonArray();
+        mc.player.getActivePotionEffects().forEach(effect -> {
+            JsonObject data = new JsonObject();
+            data.addProperty("id", String.valueOf(effect.getPotion().getRegistryName()));
+            data.addProperty("amplifier", effect.getAmplifier());
+            data.addProperty("duration", effect.getDuration());
+            effects.add(data);
+        });
+        out.add("effects", effects);
         JsonArray actions = new JsonArray();
         for (String action : new String[] {"stop", "move", "look", "select_slot", "attack", "use_item", "interact_block"}) actions.add(action);
+        if ("1".equals(System.getenv("MINDCRAFT_BRIDGE_TEST_MODE")) && mc.getIntegratedServer() != null) actions.add("test_command");
         out.add("supportedActions", actions);
         JsonObject position = new JsonObject();
         position.addProperty("x", mc.player.posX);
@@ -83,8 +97,12 @@ final class GameState {
         container.add("slots", slots);
         out.add("container", container);
         JsonArray entities = new JsonArray();
-        for (Entity entity : mc.world.getEntitiesWithinAABBExcludingEntity(mc.player, mc.player.getEntityBoundingBox().grow(24))) {
-            if (entities.size() >= 128) break;
+        List<Entity> observed = mc.world.getEntitiesWithinAABBExcludingEntity(mc.player, mc.player.getEntityBoundingBox().grow(96));
+        observed.sort(java.util.Comparator.comparingDouble(mc.player::getDistanceSq));
+        out.addProperty("entityObservationRadius", 96);
+        out.addProperty("entitiesTruncated", observed.size() > 256);
+        for (Entity entity : observed) {
+            if (entities.size() >= 256) break;
             JsonObject data = new JsonObject();
             data.addProperty("entityId", entity.getEntityId());
             data.addProperty("uuid", entity.getUniqueID().toString());
@@ -95,6 +113,14 @@ final class GameState {
             data.addProperty("z", entity.posZ);
             data.addProperty("distance", mc.player.getDistance(entity));
             data.addProperty("visible", mc.player.canEntityBeSeen(entity));
+            JsonObject bounds = new JsonObject();
+            net.minecraft.util.math.AxisAlignedBB box = entity.getEntityBoundingBox();
+            bounds.addProperty("minX", box.minX); bounds.addProperty("minY", box.minY); bounds.addProperty("minZ", box.minZ);
+            bounds.addProperty("maxX", box.maxX); bounds.addProperty("maxY", box.maxY); bounds.addProperty("maxZ", box.maxZ);
+            data.add("bounds", bounds);
+            JsonObject velocity = new JsonObject();
+            velocity.addProperty("x", entity.motionX); velocity.addProperty("y", entity.motionY); velocity.addProperty("z", entity.motionZ);
+            data.add("velocity", velocity);
             if (entity instanceof EntityLivingBase) data.addProperty("health", ((EntityLivingBase) entity).getHealth());
             entities.add(data);
         }
@@ -125,6 +151,12 @@ final class GameState {
                 JsonObject row = new JsonObject();
                 row.addProperty("id", String.valueOf(item.getRegistryName()));
                 row.addProperty("numericId", net.minecraft.item.Item.getIdFromItem(item));
+                row.add("defaultStack", stack(new ItemStack(item)));
+                net.minecraft.util.NonNullList<ItemStack> variants = net.minecraft.util.NonNullList.create();
+                item.getSubItems(net.minecraft.creativetab.CreativeTabs.SEARCH, variants);
+                JsonArray variantRows = new JsonArray();
+                for (ItemStack variant : variants) variantRows.add(stack(variant));
+                row.add("creativeVariants", variantRows);
                 rows.add(row);
             }
         }

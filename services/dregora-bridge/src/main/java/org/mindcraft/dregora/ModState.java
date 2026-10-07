@@ -11,6 +11,18 @@ final class ModState {
 
     static JsonObject read(EntityPlayer player) {
         JsonObject result = new JsonObject();
+        result.add("baubles", readOptional("baubles", () -> {
+            net.minecraftforge.items.IItemHandler handler = (net.minecraftforge.items.IItemHandler)
+                Class.forName("baubles.api.BaublesApi").getMethod("getBaublesHandler", EntityPlayer.class).invoke(null, player);
+            JsonObject data = new JsonObject();
+            com.google.gson.JsonArray slots = new com.google.gson.JsonArray();
+            for (int i = 0; i < handler.getSlots(); i++) {
+                JsonObject item = GameState.stack(handler.getStackInSlot(i));
+                item.addProperty("slot", i); slots.add(item);
+            }
+            data.add("slots", slots);
+            return data;
+        }));
         result.add("thirst", readOptional("simpledifficulty", () -> {
             Object value = Class.forName("com.charles445.simpledifficulty.api.SDCapabilities")
                 .getMethod("getThirstData", EntityPlayer.class).invoke(null, player);

@@ -44,4 +44,12 @@ public class ActionValidationTest {
         try { DregoraBridge.validate(action); fail("Unexpected field accepted"); }
         catch (IllegalArgumentException expected) {}
     }
+
+    @Test public void limitsTestCommandsToSingleGameCommands() {
+        DregoraBridge.validate(action("test_command", "{\"command\":\"give DregoraTest minecraft:bow\"}"));
+        rejected("test_command", "{\"command\":\"op DregoraTest\"}");
+        rejected("test_command", "{\"command\":\"give DregoraTest minecraft:bow\\nkill @e\"}");
+        rejected("test_command", "{\"command\":3}");
+        rejected("test_command", "{\"command\":\"say hello\"}");
+    }
 }

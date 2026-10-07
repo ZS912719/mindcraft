@@ -48,6 +48,7 @@ HTTP 请求均要求 `Authorization: Bearer <token>`。接口仅绑定 IPv4 回�
 | GET `/v1/catalog?kind=items&offset=0&limit=100` | `items`、`blocks` 或 `recipes` 注册表分页；每页最多 100 条 |
 | POST `/v1/actions` | `id`、`session`、`type` 和 `args`；返回排队结果 |
 | GET `/v1/actions/<id>` | 查询 `pending`、`completed` 或 `rejected` 结果 |
+| GET `/v1/test/state` | 仅显式测试模式：读取单人服务器中的测试目标生命值和玩家状态 |
 
 Node.js 入口为 `src/adapters/dregora/client.js` 中的 `DregoraAdapter`，提供 `getState`、`getCatalog`、`submit`、`getAction`、`execute` 和 `stop`。`capabilityValue` 读取不可用能力时返回 null。
 
@@ -57,11 +58,22 @@ Node.js 入口为 `src/adapters/dregora/client.js` 中的 `DregoraAdapter`，提
 | `move` | `ticks` 1–20；可选布尔值 `forward/back/left/right/jump/sneak/sprint` |
 | `look` | `yaw` -360–360，`pitch` -90–90 |
 | `select_slot` | `slot` 0–8 |
-| `attack` | `entityId` 和 `uuid`；目标需存活、可见、在 3 格内，且攻击冷却已恢复 |
+| `attack` | `entityId` 和 `uuid`；目标需存活、被当前准星命中、在 ReachFix 实际距离内，且攻击冷却已恢复；安装 RLCombat 时调用其攻击入口 |
 | `use_item` | `hand` 为 `main/off`，`ticks` 1–100；到期停止持续使用物品 |
 | `interact_block` | 无参数；调用当前视线目标方块的主手交互 |
+| `test_command` | 默认关闭；仅 `MINDCRAFT_BRIDGE_TEST_MODE=1`、单人服务器及作弊权限同时满足时可用；只接受限定的单条游戏指令 |
 
-攻击范围目前保守固定为 3 格，不模拟 Spartan 武器或 RLCombat 的完整战斗机制。服务器和模组仍负责执行技能、装备和交互限制。
+近战距离来自当前手持装备的有效属性，品质、附魔和其他模组属性仍由游戏计算。范围依据眼睛到准星命中点的距离，不能用玩家到实体中心的距离直接替代。兼容读取失败会报告未知并拒绝攻击，避免绕过模组机制。服务器仍负责技能、装备和交互限制。
+
+状态新增 `combat`（有效距离、攻击强度、有效攻击属性）、`effects`、实体碰撞箱与速度、Baubles 槽位，以及每个物品的 `profile`。物品注册表包含默认堆栈和创造模式公开的变体；这些变体不代表全部可能的 NBT 组合。实体观察区域扩至玩家周围 96 格的轴对齐区域，按距离保留最多 256 个实体，并报告截断；这不是武器射程上限，也不能观察尚未加载的实体。
+
+`src/adapters/dregora/combat.js` 提供独立的 `CombatController`，支持固定意图 `cover/defend/retreat` 和 `useEquipment('block'|'drink'|'self_splash'|'load_crossbow')`。它尚未替换原 Mineflayer 智能体的主循环。掩护和防御目前处理指定目标，不自动挑选敌人；撤退与接近仍需要上层提供经过验证的路线。短撤退最多 5 tick，攻击前会复查世界会话和关键部位健康。
+
+远程动作需要调用方提供实测配置 `rangedProfile`，包含 `weaponKey/ammoKey/equipmentKey/dimension/skillsKey/effectsKey/chargeTicks/samples`。每条成功样本包含 `distance/pitchOffset/hitVerified:true`；只在实测距离区间及极小边界容差内插值，不推断最大射程。弓和弩要求校准弹药位于副手，弩必须先装填；投掷武器使用物品自身的 NBT 状态作为弹药指纹。更换品质、附魔、防具、饰品、技能或药水效果会使配置失效。NBT 中的弹药或装填状态改变也可能要求新配置。移动目标、未知机制和缺少射线净空确认时停止发射。`clearShotVerified` 和 `safeRetreatVerified` 是上层必须提供的判断，不是已有的自动寻路或弹道避障功能。
+
+`use_item` 是持续使用动作，不能把所有特殊道具当成需要长按的弓。饮用需要完成使用时间；自用喷溅药水先向脚下瞄准；弩装填与发射是两个阶段，已装填弩的发射只保持 1 tick；双截棍等连续攻击仍要求专门的动作适配，不会被自动当作普通近战武器。
+
+`combat-lab.js` 的 `CombatLab` 提供目录扫描、生成带 `MindcraftFixture` 标签的静止测试目标、装备替换、近战/远程/使用效果测量。测试功能会修改测试世界，只在独立作弊实例启用。测试角色提升技能至 32 仅用于隔离装备门槛，不证明低等级生存角色能使用同一装备。结果通过 `/v1/test/state` 的服务器生命值验证伤害，失败或未命中也应保存。详情见 [战斗测试报告](COMBAT_TEST_REPORT.md)。
 
 动作只允许游戏线程执行，排队超过 2 秒过期。重新登录、重生、切换世界或维度会更换会话并取消旧任务。短时移动到期释放控制，菜单或死亡也会释放。最多排队 32 个动作，保留最近 256 个结果；同一个动作 ID 不重复执行，因此只应使用同一 ID 恢复同一个请求。
 
@@ -73,4 +85,4 @@ HTTP 超时后不能假定动作没有执行。错误中的 `actionId` 可用于
 
 自动测试覆盖参数边界、过期状态、世界会话、未知能力值、鉴权、禁止远程地址、动作轮询、拒绝反馈及不确定的网络失败。Java 测试覆盖服务端动作参数校验。
 
-2026-10-07 已在独立 Dregora 客户端完成首轮实机测试，包括模组状态读取、短时移动、停止、一次攻击、食物消耗和箱子交互。测试发现并修复了持续使用物品时未保持使用键的问题。详情与未覆盖范围见 [实机测试报告](LIVE_TEST_REPORT.md)。饮水、部位伤害变化、技能升级和长时间运行仍需验证，之后再增加容器搬运、挖掘与寻路接口，接入固定指令控制器及 DeepSeek 规划。
+2026-10-07 已在独立 Dregora 客户端完成状态读取、短时移动、停止、攻击、食物消耗和箱子交互，并修复了持续使用物品时未保持使用键的问题，见 [首轮实机测试报告](LIVE_TEST_REPORT.md)。后续已验证长柄武器、远程武器、部分道具和低温造成的部位伤害变化，见 [战斗测试报告](COMBAT_TEST_REPORT.md)。饮水、自然技能升级、长时间运行、容器搬运、挖掘与自动寻路仍需推进，固定指令 GUI 和 DeepSeek 规划尚未接入。
