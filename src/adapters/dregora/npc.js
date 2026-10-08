@@ -6,8 +6,8 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 
 export function validateNpcOrder(uuid, command, destination) {
     if (typeof uuid !== 'string' || !uuidPattern.test(uuid)) throw new BridgeError('invalid_npc_uuid');
-    if (!['follow', 'hold', 'retreat'].includes(command)) throw new BridgeError('unsupported_npc_command');
-    if (command === 'retreat') {
+    if (!['follow', 'hold', 'retreat', 'summon', 'navigate'].includes(command)) throw new BridgeError('unsupported_npc_command');
+    if (command === 'retreat' || command === 'navigate') {
         if (!destination || typeof destination !== 'object' || Array.isArray(destination)
             || Object.keys(destination).length !== 3 || !['x', 'y', 'z'].every(axis =>
                 typeof destination[axis] === 'number' && Number.isFinite(destination[axis]) && Math.abs(destination[axis]) <= 30000000))
@@ -29,7 +29,7 @@ export class DregoraNpcAdapter {
             || !Number.isFinite(state.timestamp) || !Number.isInteger(state.dimension) || state.loadedOnly !== true
             || !Array.isArray(state.npcs) || !state.npcs.every(npc => npc && uuidPattern.test(npc.uuid)
                 && typeof npc.alive === 'boolean' && Number.isFinite(npc.health) && typeof npc.movement === 'string'
-                && ['follow', 'hold', 'retreat'].includes(npc.command)
+                && ['follow', 'hold', 'retreat', 'summon', 'navigate'].includes(npc.command)
                 && npc.position && ['x', 'y', 'z'].every(axis => Number.isFinite(npc.position[axis]))))
             throw new BridgeError('invalid_npc_state');
         if (Math.abs(Date.now() - state.timestamp) > this.transport.maxStateAgeMs) throw new BridgeError('stale_state');

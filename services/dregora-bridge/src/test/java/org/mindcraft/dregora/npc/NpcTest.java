@@ -22,6 +22,7 @@ public class NpcTest {
         JsonObject retreat = request("retreat"), target = new JsonObject();
         target.addProperty("x", 1); target.addProperty("y", 64); target.addProperty("z", 2);
         retreat.add("destination", target); NpcService.validate(retreat);
+        retreat.addProperty("command", "navigate"); NpcService.validate(retreat);
         target.addProperty("y", Double.NaN); reject(retreat);
         target.addProperty("y", "64"); reject(retreat);
         target.addProperty("y", 64); target.addProperty("script", "arbitrary"); reject(retreat);
@@ -45,5 +46,8 @@ public class NpcTest {
         assertEquals("arrived", MovementPolicy.decide("retreat", true, 4, 100));
         assertEquals("moving", MovementPolicy.decide("retreat", true, 5, 100));
         assertEquals("holding", MovementPolicy.decide("hold", true, 100, 0));
+        assertEquals("arrived", MovementPolicy.decide("navigate", true, 1, 1200));
+        assertEquals("moving", MovementPolicy.decide("navigate", true, 2, 1200));
+        assertEquals("navigation_expired", MovementPolicy.decide("navigate", true, 100, 0));
     }
 }

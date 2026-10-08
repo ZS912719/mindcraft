@@ -36,4 +36,11 @@ public final class NpcMod {
     public static void dimensionChanged(PlayerEvent.PlayerChangedDimensionEvent event) { NpcService.invalidate(event.player); }
     @SubscribeEvent
     public static void logout(PlayerEvent.PlayerLoggedOutEvent event) { NpcService.invalidate(event.player); }
+    @SubscribeEvent
+    public static void serverTick(net.minecraftforge.fml.common.gameevent.TickEvent.ServerTickEvent event) {
+        if (event.phase == net.minecraftforge.fml.common.gameevent.TickEvent.Phase.END) {
+            net.minecraft.server.MinecraftServer server = net.minecraftforge.fml.common.FMLCommonHandler.instance().getMinecraftServerInstance();
+            if (server != null) NpcRespawns.tick(server);
+        }
+    }
 }

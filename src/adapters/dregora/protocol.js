@@ -38,7 +38,7 @@ export function validateAction(type, args = {}) {
         else if (rule === 'requirements') valid = Array.isArray(value) && value.length >= 1 && value.length <= 8
             && value.every(expression => typeof expression === 'string' && expression.length <= 256);
         else if (rule === 'testCommand') valid = typeof value === 'string' && value.length <= 2048
-            && !/[\r\n]/.test(value) && /^(give|replaceitem|summon|effect|tp|kill|gamemode|time|weather|difficulty|gamerule|reskillable|fill|advancement) .+$/.test(value);
+            && !/[\r\n]/.test(value) && /^(give|replaceitem|summon|effect|tp|kill|gamemode|time|weather|difficulty|gamerule|reskillable|fill|advancement|mindcraft_npc) .+$/.test(value);
         else {
             const bounds = { ticks20: [1, 20], ticks100: [1, 100], yaw: [-360, 360], pitch: [-90, 90], slot: [0, 8], inventorySlot: [0, 35], entityId: [0, 2147483647] }[rule];
             valid = typeof value === 'number' && Number.isFinite(value) && value >= bounds[0] && value <= bounds[1];

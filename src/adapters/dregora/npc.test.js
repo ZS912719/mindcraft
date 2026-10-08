@@ -80,3 +80,27 @@ test('stale or nonauthoritative NPC state is rejected', async t => {
     await assert.rejects(adapter.getState(), { code: 'stale_state' }); stale = false;
     await assert.rejects(adapter.getState(), { code: 'invalid_npc_state' });
 });
+
+test('summon uses the NPC endpoint and accepts countdown state without claiming teleport success', async t => {
+    const adapter = await fixture(t, async (request, reply) => {
+        if (request.url === '/v1/npcs') {
+            const snapshot = state(); snapshot.npcs[0].command = 'summon';
+            snapshot.npcs[0].movement = 'summon_waiting'; snapshot.npcs[0].summonTicks = 60;
+            return reply(snapshot);
+        }
+        let body = ''; for await (const part of request) body += part;
+        const command = JSON.parse(body); assert.equal(command.command, 'summon');
+        assert.equal(command.destination, undefined);
+        reply({ ...command, status: 'completed', reason: 'command_set', effectVerified: false });
+    });
+    assert.equal((await adapter.command(uuid, 'summon')).effectVerified, false);
+    assert.throws(() => validateNpcOrder(uuid, 'summon', { x: 0, y: 64, z: 0 }));
+});
+
+test('material-aware navigation accepts only finite structured destinations', () => {
+    assert.deepEqual(validateNpcOrder(uuid,'navigate',{x:1.5,y:64,z:2.5}),
+        {uuid,command:'navigate',destination:{x:1.5,y:64,z:2.5}});
+    assert.throws(()=>validateNpcOrder(uuid,'navigate'));
+    assert.throws(()=>validateNpcOrder(uuid,'navigate',{x:1,y:Infinity,z:2}));
+    assert.throws(()=>validateNpcOrder(uuid,'navigate',{x:1,y:64,z:2,script:'anything'}));
+});

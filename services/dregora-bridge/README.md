@@ -1,5 +1,9 @@
 # Dregora game adapter — first implementation
 
+2026-10-08：NPC 跟随、撤退和新增的 `navigate` 使用本地增量 A*，在有限地形模型内比较绕行、搭桥和逐级垫高成本。`/mindcraft_npc supply <uuid> <玩家背包槽位0-35> <数量1-64>` 转移真实建筑材料，`/mindcraft_npc navigate <uuid> <x> <y> <z>` 指定附近目的地。仅支持无 NBT、无原生技能要求的安全原版完整方块；每次放置经过原生交互和 Forge 事件，观察方块变化后扣除 NPC 材料。无需 LLM/API。范围、成本、失败状态及限制见 [NPC foundation](NPC_FOUNDATION.md)。
+
+2026-10-08：NPC 新增 `/mindcraft_npc summon <uuid>`，等待 60 个服务端 tick（正常约 3 秒）后召唤到主人水平半径 5 格、上下 3 格内的安全站立面，带传送粒子，可用 `hold` 取消。岩浆、低氧和致命原版环境伤害会立即尝试救援；死亡后等待 600 tick（正常约 30 秒）以原 UUID 重生，主人不可用或无安全落点时延后。死亡掉落保持原规则，重生背包和装备为空。服务端入口已预留物品／按键接入，详情见 [NPC foundation](NPC_FOUNDATION.md)。
+
 2026-10-07：新增独立的服务端可见 NPC 原型，保留下面记录的真实玩家客户端后端。NPC 提供 UUID 状态、独立背包和基础跟随／停止／指定位置撤退；已在独立实例完成基础显示、移动、取消和 UUID 重载验证，见 [NPC 实测报告](NPC_RUNTIME_TEST_REPORT.md)；模组技能战斗适配及 GUI 尚未完成。启用 `MINDCRAFT_BRIDGE_BACKEND=npc` 后禁用玩家动作及按键控制。架构调查、限制、协议和独立实例验证步骤见 [NPC foundation](NPC_FOUNDATION.md)。
 
 此目录提供独立的 Forge 1.12.2 客户端桥接模组，以及 Mindcraft 内的 Node.js 适配器。原版 Mineflayer 启动路径保持不变。本阶段不调用 DeepSeek，不启用模型生成代码，不安装模组到现有 Dregora。

@@ -82,7 +82,10 @@ public final class DregoraBridge {
             String method = exchange.getRequestMethod();
             if ((method.equals("GET") && path.equals("/v1/npcs"))
                 || (method.equals("POST") && path.equals("/v1/npcs/commands"))) {
-                if (!npcBackend) { reply(exchange, 409, error("npc_backend_required")); return; }
+                // Explicit singleplayer test mode may inspect NPCs while using legacy fixture commands.
+                if (!npcBackend && !"1".equals(System.getenv("MINDCRAFT_BRIDGE_TEST_MODE"))) {
+                    reply(exchange, 409, error("npc_backend_required")); return;
+                }
                 if (exchange.getRequestHeaders().getFirst("Origin") != null) {
                     reply(exchange, 403, error("browser_origin_not_allowed")); return;
                 }
@@ -260,7 +263,7 @@ public final class DregoraBridge {
                 || !args.getAsJsonPrimitive("command").isString()) throw new IllegalArgumentException("invalid_command");
             String command = args.get("command").getAsString();
             if (command.length() > 2048 || command.contains("\n") || command.contains("\r")
-                || !command.matches("(give|replaceitem|summon|effect|tp|kill|gamemode|time|weather|difficulty|gamerule|reskillable|fill|advancement) .+"))
+                || !command.matches("(give|replaceitem|summon|effect|tp|kill|gamemode|time|weather|difficulty|gamerule|reskillable|fill|advancement|mindcraft_npc) .+"))
                 throw new IllegalArgumentException("invalid_command");
         }
         for (Map.Entry<String, JsonElement> field : args.entrySet()) if (!allowed.contains(field.getKey())) throw new IllegalArgumentException("unknown_argument");

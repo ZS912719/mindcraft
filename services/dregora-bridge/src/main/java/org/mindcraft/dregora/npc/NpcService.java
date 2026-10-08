@@ -65,6 +65,16 @@ public final class NpcService {
         for (Entity entity : player.world.loadedEntityList) if (entity instanceof EntityTeammate
             && owner.equals(((EntityTeammate) entity).owner())) npcs.add(snapshot((EntityTeammate) entity));
         out.add("npcs", npcs);
+        JsonArray respawns = new JsonArray();
+        net.minecraft.nbt.NBTTagList pending = NpcRespawns.state(server, owner);
+        for (int i = 0; i < pending.tagCount(); i++) {
+            net.minecraft.nbt.NBTTagCompound record = pending.getCompoundTagAt(i);
+            JsonObject waiting = new JsonObject();
+            waiting.addProperty("uuid", record.getUniqueId("UUID").toString());
+            waiting.addProperty("remainingTicks", Math.max(0, record.getLong("Due") - server.getWorld(0).getTotalWorldTime()));
+            waiting.addProperty("status", "respawn_pending"); respawns.add(waiting);
+        }
+        out.add("respawns", respawns);
         return out;
     }
 
@@ -73,6 +83,8 @@ public final class NpcService {
         out.addProperty("uuid", npc.getUniqueID().toString()); out.addProperty("owner", npc.owner().toString());
         out.addProperty("alive", npc.isEntityAlive()); out.addProperty("health", npc.getHealth());
         out.addProperty("command", npc.command()); out.addProperty("movement", npc.movement());
+        out.addProperty("summonTicks", npc.summonTicks());
+        out.add("navigation", npc.navigationState()); out.addProperty("buildingSupplies", NpcBuilding.supplies(npc));
         position.addProperty("x", npc.posX); position.addProperty("y", npc.posY); position.addProperty("z", npc.posZ);
         out.add("position", position);
         for (String name : new String[] {"reskillable", "firstAid", "rlcombat", "baubles", "ranged", "useItem", "combat"}) {
@@ -119,8 +131,8 @@ public final class NpcService {
             if (!request.get(key).getAsString().matches("(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
                 throw new IllegalArgumentException("invalid_uuid");
         String command = request.get("command").getAsString();
-        if (!Arrays.asList("follow", "hold", "retreat").contains(command)) throw new IllegalArgumentException("unsupported_npc_command");
-        if ("retreat".equals(command)) {
+        if (!Arrays.asList("follow", "hold", "retreat", "summon", "navigate").contains(command)) throw new IllegalArgumentException("unsupported_npc_command");
+        if ("retreat".equals(command) || "navigate".equals(command)) {
             if (!request.has("destination") || !request.get("destination").isJsonObject()) throw new IllegalArgumentException("destination_required");
             JsonObject target = request.getAsJsonObject("destination");
             if (target.size() != 3) throw new IllegalArgumentException("invalid_destination");
@@ -147,14 +159,15 @@ public final class NpcService {
         if (!npc.isEntityAlive() || !player.isEntityAlive() || player.isSpectator()) throw new IllegalStateException("actor_unavailable");
         String command = request.get("command").getAsString();
         Vec3d target = null;
-        if (!"hold".equals(command) && npc.getDistanceSq(player) > 32 * 32) throw new IllegalArgumentException("outside_local_range");
-        if ("retreat".equals(command)) {
+        if (!"hold".equals(command) && !"summon".equals(command) && npc.getDistanceSq(player) > 32 * 32) throw new IllegalArgumentException("outside_local_range");
+        if ("retreat".equals(command) || "navigate".equals(command)) {
             JsonObject destination = request.getAsJsonObject("destination");
             target = new Vec3d(destination.get("x").getAsDouble(), destination.get("y").getAsDouble(), destination.get("z").getAsDouble());
             if (npc.getPositionVector().squareDistanceTo(target) > 32 * 32 || !safeDestination(npc, target))
                 throw new IllegalArgumentException("destination_unsafe_or_unloaded");
         }
-        npc.order(command, target);
+        if ("summon".equals(command)) NpcSummoning.request(player, npc);
+        else npc.order(command, target);
         JsonObject result = new JsonObject();
         result.addProperty("id", id); result.addProperty("uuid", npc.getUniqueID().toString()); result.addProperty("session", session);
         result.addProperty("status", "completed"); result.addProperty("reason", "command_set");

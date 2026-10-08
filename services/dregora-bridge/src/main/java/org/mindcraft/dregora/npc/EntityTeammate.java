@@ -5,6 +5,9 @@ import net.minecraft.entity.EntityCreature;
 import net.minecraft.entity.SharedMonsterAttributes;
 import net.minecraft.entity.ai.EntityAISwimming;
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.block.material.Material;
+import net.minecraft.util.DamageSource;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.pathfinding.PathNodeType;
 import net.minecraft.util.math.Vec3d;
@@ -18,7 +21,10 @@ public final class EntityTeammate extends EntityCreature {
     private String movement = "holding";
     private Vec3d destination;
     private int remainingTicks;
+    private int summonTicks;
+    private int rescueRetryTicks;
     private final ItemStackHandler backpack = new ItemStackHandler(27);
+    private final NpcNavigation navigation = new NpcNavigation(this);
     public EntityTeammate(World world) {
         super(world);
         setSize(0.6F, 1.8F);
@@ -42,17 +48,47 @@ public final class EntityTeammate extends EntityCreature {
     public void setOwner(UUID value) { owner = value; }
     public String command() { return command; }
     public String movement() { return movement; }
+    public int summonTicks() { return summonTicks; }
+    void beginSummon() { order("summon", null); summonTicks = SummonPolicy.SUMMON_TICKS; movement = "summon_waiting"; }
+    void summonFailed(String reason) { summonTicks = 0; movement = reason; }
     public ItemStackHandler backpack() { return backpack; }
+    public com.google.gson.JsonObject navigationState() { return navigation.state(); }
+    void suppliesChanged() { navigation.reset(); }
     public void order(String value, Vec3d target) {
+        summonTicks = 0;
         command = value;
         destination = target;
-        remainingTicks = "retreat".equals(value) ? 200 : 0;
+        remainingTicks = "retreat".equals(value) ? 200 : "navigate".equals(value) ? 1200 : 0;
         getNavigator().clearPath();
+        navigation.reset();
         movement = "hold".equals(value) ? "holding" : "requested";
     }
     @Override public void onLivingUpdate() {
         super.onLivingUpdate();
         if (world.isRemote || !isEntityAlive()) return;
+        if (rescueRetryTicks > 0) rescueRetryTicks--;
+        if (SummonPolicy.emergency(isInLava(), isInsideOfMaterial(Material.WATER), getAir(), isBurning(), getHealth(), false)
+            && rescueRetryTicks == 0) {
+            rescueRetryTicks = 20;
+            if (rescue()) return;
+        }
+        if ("summon".equals(command)) {
+            getNavigator().clearPath();
+            EntityPlayer player = owner == null ? null : world.getPlayerEntityByUUID(owner);
+            if (!(player instanceof EntityPlayerMP) || !player.isEntityAlive() || player.isSpectator()) {
+                order("hold", null); movement = "owner_unavailable"; return;
+            }
+            if (summonTicks > 0) {
+                summonTicks--;
+                if (summonTicks % 10 == 0) NpcSummoning.particles(this);
+            }
+            if (summonTicks == 0) {
+                if (!NpcSummoning.teleport(this, (EntityPlayerMP) player, "summoned")) {
+                    order("hold", null); movement = "summon_no_safe_position";
+                }
+            }
+            return;
+        }
         if (remainingTicks > 0) remainingTicks--;
         EntityPlayer player = owner == null ? null : world.getPlayerEntityByUUID(owner);
         boolean ready = player != null && player.isEntityAlive() && !player.isSpectator()
@@ -61,24 +97,50 @@ public final class EntityTeammate extends EntityCreature {
         double distance = target == null ? 0 : getPositionVector().squareDistanceTo(target);
         String decision = MovementPolicy.decide(command, ready, distance, remainingTicks);
         if (!"moving".equals(decision)) {
-            getNavigator().clearPath();
+            navigation.stopMotion();
             movement = decision;
             if ("owner_unavailable".equals(decision)) {
                 command = "hold"; destination = null; remainingTicks = 0;
             }
-            if ("retreat_expired".equals(decision) || ("retreat".equals(command) && "arrived".equals(decision))) {
+            if ("retreat_expired".equals(decision) || "navigation_expired".equals(decision)
+                || (("retreat".equals(command) || "navigate".equals(command)) && "arrived".equals(decision))) {
                 command = "hold";
                 destination = null;
             }
             return;
         }
-        if (ticksExisted % 10 != 0) return;
         if (!NpcService.safeDestination(this, target)) {
-            getNavigator().clearPath();
+            navigation.stopMotion();
             movement = "destination_unsafe_or_unloaded";
             return;
         }
-        movement = getNavigator().tryMoveToXYZ(target.x, target.y, target.z, 1.0) ? "pathing" : "path_unavailable";
+        double radius = "follow".equals(command) ? 3 : "navigate".equals(command) ? 1 : 2;
+        movement = navigation.tick(target, radius);
+    }
+    private boolean rescue() {
+        EntityPlayer player = owner == null ? null : world.getPlayerEntityByUUID(owner);
+        boolean rescued = player instanceof EntityPlayerMP
+            && NpcSummoning.teleport(this, (EntityPlayerMP) player, "emergency_summoned");
+        if (rescued) rescueRetryTicks = 0;
+        return rescued;
+    }
+    @Override public boolean attackEntityFrom(DamageSource source, float amount) {
+        if (!world.isRemote && isEntityAlive()) {
+            boolean environmental = source == DamageSource.DROWN || source == DamageSource.LAVA
+                || source == DamageSource.IN_FIRE || source == DamageSource.ON_FIRE || source == DamageSource.HOT_FLOOR
+                || source == DamageSource.FALL || source == DamageSource.IN_WALL || source == DamageSource.OUT_OF_WORLD;
+            boolean danger = source == DamageSource.LAVA || source == DamageSource.DROWN
+                || (environmental && amount >= getHealth());
+            if (danger && (rescueRetryTicks == 0 || amount >= getHealth())) {
+                rescueRetryTicks = 20;
+                if (rescue()) return false;
+            }
+        }
+        return super.attackEntityFrom(source, amount);
+    }
+    @Override public void onDeath(DamageSource source) {
+        super.onDeath(source);
+        if (!world.isRemote && dead) NpcRespawns.schedule(this);
     }
     @Override public void writeEntityToNBT(NBTTagCompound tag) {
         super.writeEntityToNBT(tag);
