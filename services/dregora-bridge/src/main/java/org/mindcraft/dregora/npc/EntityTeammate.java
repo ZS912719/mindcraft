@@ -23,6 +23,7 @@ public final class EntityTeammate extends EntityCreature {
     private int remainingTicks;
     private int summonTicks;
     private int rescueRetryTicks;
+    private int followRecoveryRetryTicks;
     private final ItemStackHandler backpack = new ItemStackHandler(27);
     private final NpcNavigation navigation = new NpcNavigation(this);
     public EntityTeammate(World world) {
@@ -67,6 +68,7 @@ public final class EntityTeammate extends EntityCreature {
         super.onLivingUpdate();
         if (world.isRemote || !isEntityAlive()) return;
         if (rescueRetryTicks > 0) rescueRetryTicks--;
+        if (followRecoveryRetryTicks > 0) followRecoveryRetryTicks--;
         if (SummonPolicy.emergency(isInLava(), isInsideOfMaterial(Material.WATER), getAir(), isBurning(), getHealth(), false)
             && rescueRetryTicks == 0) {
             rescueRetryTicks = 20;
@@ -92,9 +94,16 @@ public final class EntityTeammate extends EntityCreature {
         if (remainingTicks > 0) remainingTicks--;
         EntityPlayer player = owner == null ? null : world.getPlayerEntityByUUID(owner);
         boolean ready = player != null && player.isEntityAlive() && !player.isSpectator()
-            && player.dimension == dimension && getDistanceSq(player) <= 32 * 32;
+            && player.dimension == dimension
+            && ("follow".equals(command) || getDistanceSq(player) <= MovementPolicy.LOCAL_RANGE * MovementPolicy.LOCAL_RANGE);
         Vec3d target = "follow".equals(command) && ready ? player.getPositionVector() : destination;
         double distance = target == null ? 0 : getPositionVector().squareDistanceTo(target);
+        // Distance alone does not invalidate ownership: a distant follower waits for a manual summon.
+        if (MovementPolicy.recoverFollow(command, ready, distance, followRecoveryRetryTicks,
+            getLeashed() || isRiding() || isBeingRidden()) && player instanceof EntityPlayerMP) {
+            followRecoveryRetryTicks = MovementPolicy.FOLLOW_RECOVERY_RETRY_TICKS;
+            if (NpcSummoning.recoverFollow(this, (EntityPlayerMP) player)) return;
+        }
         String decision = MovementPolicy.decide(command, ready, distance, remainingTicks);
         if (!"moving".equals(decision)) {
             navigation.stopMotion();

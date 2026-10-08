@@ -63,10 +63,19 @@ public final class NpcSummoning {
         return true;
     }
     static boolean teleport(EntityTeammate npc, EntityPlayerMP player, String reason) {
+        return teleport(npc, player, reason, "hold");
+    }
+    static boolean recoverFollow(EntityTeammate npc, EntityPlayerMP player) {
+        if (!player.getUniqueID().equals(npc.owner()) || !npc.isEntityAlive()
+            || !MovementPolicy.recoverFollow(npc.command(), true, npc.getDistanceSq(player), 0,
+                npc.getLeashed() || npc.isRiding() || npc.isBeingRidden())) return false;
+        return teleport(npc, player, "follow_recovered", "follow");
+    }
+    private static boolean teleport(EntityTeammate npc, EntityPlayerMP player, String reason, String nextCommand) {
         Vec3d target = landing(npc, player);
         if (target == null) return false;
         particles(npc);
-        npc.order("hold", null);
+        npc.order(nextCommand, null);
         npc.setPositionAndUpdate(target.x, target.y, target.z);
         npc.motionX = npc.motionY = npc.motionZ = 0;
         npc.fallDistance = 0;

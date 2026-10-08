@@ -93,9 +93,18 @@ final class NpcNavigation {
         if(placementIndex<step.placements.size()) {
             npc.getNavigator().clearPath();
             status=npc.onGround?"building":"waiting_for_ground";
-            if(!npc.onGround || npc.ticksExisted%5!=0) return status;
+            if(!npc.onGround) { stopMotion(); return status; }
             BlockPos support=block(step.placements.get(placementIndex));
-            if(cell(step.placements.get(placementIndex))==LocalRoute.Cell.SOLID) { placementIndex++; return "building"; }
+            if(cell(step.placements.get(placementIndex))==LocalRoute.Cell.SOLID) {
+                placementIndex++; edgeTicks=0; stopMotion(); return status;
+            }
+            if(npc.ticksExisted%5!=0) {
+                if(edgeTicks>0) {
+                    if(approachEdge(support)) return "building_edge";
+                    retry("building_edge_unreachable");
+                }
+                return status;
+            }
             String outcome=NpcBuilding.place(npc,support);
             if("placement_no_visible_anchor".equals(outcome) && approachEdge(support)) return "building_edge";
             if(!"placed".equals(outcome)) { retry(outcome); return status; }
@@ -108,7 +117,9 @@ final class NpcNavigation {
             || cell(target.add(0,-1,0))!=LocalRoute.Cell.SOLID) { retry("terrain_changed"); return status; }
         Vec3d destination=new Vec3d(target.x+0.5,target.y,target.z+0.5);
         double distance=npc.getPositionVector().squareDistanceTo(destination);
-        if(distance<0.18 && npc.onGround) {
+        // A bridge-side placement already puts the center inside the new standing cell.
+        // Recognize that cell before asking vanilla navigation for another path from its edge.
+        if(distance<0.25 && point(npc.getPositionVector()).equals(target) && npc.onGround) {
             index++; placementIndex=stepTicks=stuckTicks=0; bestDistance=Double.POSITIVE_INFINITY;
             npc.getNavigator().clearPath(); status="pathing"; return status;
         }
@@ -123,11 +134,12 @@ final class NpcNavigation {
         status="pathing"; return status;
     }
     private boolean approachEdge(BlockPos support) {
-        if(++edgeTicks>8 || Math.abs(support.getY()+1-npc.posY)>0.2) return false;
+        // MoveHelper consumes its target each AI tick; keep steering between placement attempts.
+        if(++edgeTicks>100 || Math.abs(support.getY()+1-npc.posY)>0.2) return false;
         double dx=support.getX()+0.5-npc.posX,dz=support.getZ()+0.5-npc.posZ;
         double x=npc.posX,z=npc.posZ;
-        if(Math.abs(dx)>0.4 && Math.abs(dz)<0.3) x=support.getX()+(dx>0?0.05:0.95);
-        else if(Math.abs(dz)>0.4 && Math.abs(dx)<0.3) z=support.getZ()+(dz>0?0.05:0.95);
+        if(Math.abs(dx)>0.1 && Math.abs(dz)<0.3) x=support.getX()+(dx>0?0.05:0.95);
+        else if(Math.abs(dz)>0.1 && Math.abs(dx)<0.3) z=support.getZ()+(dz>0?0.05:0.95);
         else return false;
         AxisAlignedBB body=npc.getEntityBoundingBox().offset(x-npc.posX,0,z-npc.posZ);
         if(!npc.world.getCollisionBoxes(npc,body).isEmpty()

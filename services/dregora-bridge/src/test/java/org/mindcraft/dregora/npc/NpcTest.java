@@ -50,4 +50,22 @@ public class NpcTest {
         assertEquals("moving", MovementPolicy.decide("navigate", true, 2, 1200));
         assertEquals("navigation_expired", MovementPolicy.decide("navigate", true, 100, 0));
     }
+    @Test public void followRecoveryHasBothNearAndFarBoundaries() {
+        assertFalse(MovementPolicy.recoverFollow("follow", true, 143.99, 0, false));
+        assertTrue(MovementPolicy.recoverFollow("follow", true, 144, 0, false));
+        assertTrue(MovementPolicy.recoverFollow("follow", true, 1024, 0, false));
+        assertFalse(MovementPolicy.recoverFollow("follow", true, 1024.01, 0, false));
+        assertEquals("outside_local_range", MovementPolicy.decide("follow", true, 1024.01, 0));
+        assertFalse(MovementPolicy.recoverFollow("follow", true, Double.NaN, 0, false));
+        assertFalse(MovementPolicy.recoverFollow("follow", true, Double.POSITIVE_INFINITY, 0, false));
+    }
+    @Test public void followRecoveryRespectsOrdersOwnerAndRetryDelay() {
+        for (String command : new String[] {"hold", "retreat", "navigate", "summon"})
+            assertFalse(MovementPolicy.recoverFollow(command, true, 400, 0, false));
+        assertFalse(MovementPolicy.recoverFollow("follow", false, 400, 0, false));
+        assertFalse(MovementPolicy.recoverFollow("follow", true, 400, 1, false));
+        assertFalse(MovementPolicy.recoverFollow("follow", true, 400, 0, true));
+        assertTrue(MovementPolicy.recoverFollow("follow", true, 400, 0, false));
+        assertEquals(20, MovementPolicy.FOLLOW_RECOVERY_RETRY_TICKS);
+    }
 }
