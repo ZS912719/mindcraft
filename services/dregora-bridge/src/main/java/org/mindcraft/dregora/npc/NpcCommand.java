@@ -16,7 +16,22 @@ final class NpcCommand extends CommandBase {
         try {
             EntityPlayerMP player = getCommandSenderAsPlayer(sender);
             NpcService.testOwner(server, player.getUniqueID());
-            if (args.length == 1 && "spawn".equals(args[0])) {
+            if (args.length == 2 && "test_dimension".equals(args[0])) {
+                int dimension = Integer.parseInt(args[1]);
+                if (!player.isCreative() || (dimension != 0 && dimension != -1) || dimension == player.dimension)
+                    throw new IllegalArgumentException("invalid_test_dimension");
+                if (server.getWorld(dimension) == null) net.minecraftforge.common.DimensionManager.initDimension(dimension);
+                if (server.getWorld(dimension) == null) throw new IllegalStateException("test_dimension_unavailable");
+                final double targetX=player.posX,targetY=player.posY,targetZ=player.posZ;
+                // Direct fixture travel has no portal-entry vector; the default portal placer requires one.
+                player.changeDimension(dimension,new net.minecraftforge.common.util.ITeleporter() {
+                    @Override public void placeEntity(net.minecraft.world.World world,net.minecraft.entity.Entity entity,float yaw) {
+                        double y=world.provider.getDimension()==-1?world.getActualHeight():targetY;
+                        entity.setLocationAndAngles(targetX,y,targetZ,yaw,entity.rotationPitch);
+                        entity.motionX=entity.motionY=entity.motionZ=0; entity.fallDistance=0;
+                    }
+                });
+            } else if (args.length == 1 && "spawn".equals(args[0])) {
                 if (!player.isEntityAlive() || player.isSpectator()) throw new IllegalStateException("actor_unavailable");
                 if (NpcService.state(server, player.getUniqueID()).getAsJsonArray("npcs").size() >= 8)
                     throw new IllegalArgumentException("loaded_npc_limit");

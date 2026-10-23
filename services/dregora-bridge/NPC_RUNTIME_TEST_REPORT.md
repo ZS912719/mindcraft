@@ -1,5 +1,7 @@
 # NPC feasibility runtime test
 
+Latest development note (2026-10-23): lifecycle and collision-walking hardening results are recorded separately below. Earlier live results describe their original tested builds and must not be read as validation of subsequent code.
+
 Date: 2026-10-07. Instance: `Dregora AI Test`, Dregora 1.1.2b, Minecraft 1.12.2, Forge 14.23.5.2860. New disposable world: `MindcraftNPC-Test-20261007`, Creative mode with cheats enabled. No LLM or DeepSeek calls were made. Original-instance mods, configuration and saves were not changed.
 
 ## Observed behavior
@@ -114,3 +116,47 @@ The measured times include local fixture/bridge request overhead and are example
 The temporary magma and blocked volumes were removed, the extended artificial test floor was restored to stone, and the player's original position/orientation was restored. This expanded the existing disposable stone platform and does not constitute exact natural-terrain rollback. Cleanup left the original NPC holding nearby with health 20 and 18 cobblestone blocks. Private test scripts and observations remain ignored; no credentials or raw logs are included in tracked files.
 
 The owner confirmed saving to the title screen, and the bridge reported `connected: false`. The test client's recorded PID/start time and isolated-instance path were checked before shutdown. All three display/option files were restored from this run's `follow-before-*` backups and hash verified. The installed JAR matches the tested build by SHA-256. Original-instance content was not modified. No new production-code fix was needed during this live matrix.
+
+## Lifecycle and natural-terrain hardening (2026-10-22–23)
+
+This build adds immediate owner-death session invalidation, cancellation before native AI advances, chunk-unload cancellation, throttled respawn landing searches and sanitized respawn-record loading. It also adds collision-checked native walking candidates for vanilla partial surfaces and plants, with loaded-world/hazard/support checks and bounded per-edge ascent/descent. Both walking and construction executors issue single checked waypoints to prevent unchecked native shortcuts.
+
+Offline build and 32 Java tests passed with zero failures/errors. New regression coverage exercises slab/snow/single-block slope geometry, low ceilings, two-block drops, unsupported edges, diagonal corner obstruction, changed terrain, supported stepping transitions and malformed respawn records containing inventory/equipment tags. The 31 Node tests include the test-only `spreadplayers` allowlist boundary. These automated tests complement the actual game checks below.
+
+A separate save, `MindcraftNPC-Reliability-20261022`, was copied from the stopped test world's save and given a distinct display name. Only the isolated test instance received the new JAR. The original instance and the previous NPC test save were not opened or edited. Display options were backed up before temporarily disabling fullscreen/shaders, reducing render distance and disabling pause on lost focus. The owner entered the new save after Windows input again returned `GetCursorPos` access denied.
+
+Slab/stair stepping initially failed safely: the native body rises before its center crosses the riser. Planned waypoints still require center support; moving bodies now use actual footprint support within a bounded checked edge. Slabs and stairs passed after correction and full client restart.
+
+The initial snow fixture assumed a collision height of 0.125. Installed two-layer snow actually placed the player's feet 0.0625 above the floor; the fixture now measures actual feet height. Snow traversal then passed. Checked walking edges allow up to 1.25 blocks for a block plus thin cover; the construction graph still uses one-block integer steps.
+
+The initial dimension fixture exposed an uninitialized target world and a vanilla teleporter assumption about prior portal state. The test-only command now initializes the dimension and uses custom Forge `ITeleporter` placement. Native player dimension events were subsequently tested; vanilla portal entry/exit placement and NPC dimension travel were not. Snapshots/commands reject inconsistent entity/world dimensions and absent world-member owners. Intermediate interrupted engine states were excluded from navigation results.
+
+A refused natural snow route stood on `biomesoplenty:grass`. Read-only inspection of the installed BOP build found no added entity-contact damage behavior in ordinary grass/dirt implementations. Walking/standing now admit only those exact classes with runtime build `7.0.1.2445`; other unknown mod implementations remain refused. This does not admit modded building supplies or bypass runtime requirements.
+
+### Verified runtime results
+
+| Scenario | Evidence |
+|---|---|
+| Plants, slabs, snow, stairs, five-block stepped hill and ice | Final installed build reached every specified destination within one block, retained health 20 and unchanged inventory. Actual positions were rechecked from observations on October 23. |
+| Obstacle added during execution | Replanned and reached the destination with unchanged health/inventory. |
+| Construction regression | Four cardinal three-cell gaps consumed three real blocks each; five-cell gap consumed five with zero recovery replans; three-block rise consumed two. Independent client ray traces confirmed supports. These checks preceded the final BOP terrain allowance; construction-material eligibility was not broadened afterward. |
+| Follow recovery regression | Final build passed walking at 11 blocks, recovery at 20/31, continued following, waiting at 40, delayed manual summon, hold, and magma/blocked landing refusal. Identity, health and contents were preserved. |
+| Nonempty full-process reload | Same UUID/owner preserved 18 cobblestone and a leather helmet; a later reload also preserved 50 supplies. Movement reset to hold. |
+| Owner death and respawn | Actual death/respawn changed sessions, canceled the NPC order and preserved its contents. Raw server POST rejected old-session commands independently of the Node client's session guard. |
+| Overworld → Nether → Overworld | Actual dimension/world fields agreed; away dimension had no owned NPC; original NPC remained in the Overworld holding. Server rejected pre-transition session. Custom placement fixture only. |
+| Pending NPC respawn across full process restart | Saved NBT contained one pending record and its exact 600-tick deadline. After save/quit/restart, 24 observations showed the same UUID/owner respawn at or after that deadline with health 20 and empty equipment/backpack; pending record removed. Countdown paused while the world was stopped. |
+| Actual chunk unload/reload (October 23) | Owner moved 512 blocks away; original NPC disappeared from the server's loaded list with no pending respawn. After return, the same UUID/owner reappeared holding with unchanged health, backpack and equipment. Its age counter restarted. A bridge timeout during return was resolved by observation only, without repeating the teleport. |
+| Known unmodified BOP snow slope | Walked over four blocks from feet height 93.125 toward height 91 and arrived within one block. No damage or material consumption; two replans. |
+| Three grounded natural follow samples | Two actually walked about 4.36 and 4.42 blocks and arrived; one safely refused an unsafe/unloaded destination. Samples observed walking, with maximum sampled hops about 0.32 and 1.02 blocks. Owner distances stayed below automatic recovery range; teleport was not counted as walking. No damage/material consumption. |
+
+Earlier surface fixtures started at health 19 and preserved it; final regressions followed normal NPC respawn at health 20. NPC death occurred with 31 fixture supplies and a helmet equipped. Respawn correctly restored no items; exact ground-drop counts were not independently established.
+
+### Scope and remaining limits
+
+Successful natural routes sometimes used two or three bounded replans. Three terrain samples and one known slope do not establish arbitrary natural-terrain optimality or reliability. Unknown mod surfaces outside the two audited BOP implementations, mod-specific hazards, longer mixed ascents, foliage changes, native portal placement, leash/rider exclusions and multiplayer need focused validation. First Aid, NPC-owned skills, accessories, combat, ranged and right-click item mechanics remain separate adaptation work. No LLM was connected.
+
+Known liquids, fire, cactus, magma, TNT, slime, web and portal surfaces are refused by shared geometry checks. This is not comprehensive Dregora hazard detection. Failure states remain observable and must not be interpreted as success. The copied world has changed time, death/experience and generated dimension state; fixture cleanup is not an exact save rollback. Private fixtures, launch files, logs and credentials remain ignored.
+
+On October 23, reopening found the NPC alive at health 18.5 rather than the prior recorded 20. The owner subsequently confirmed causing this damage; it is not an unexplained environmental-damage result. Chunk unload/reload and cleanup retained 18.5. This observation does not establish complete hazard protection. Final state: original UUID/owner, hold near the restored player position, no supplies, empty equipment and no pending respawn. No unrelated entities/items were deleted; exact death-drop cleanup is not claimed.
+
+Artificial bridges, gaps, slopes, snow/ice fixtures, dynamic obstacles, magma and blocked landing volumes were cleared, and the stone test floor and original player position/orientation were restored. This is fixture cleanup only. The dedicated reliability copy was saved and the client exited normally. All three option files were restored from this task's `reliability-before-*` backups and SHA-256 verified; the installed JAR matches the tested build. Original-instance mods/config/saves and the previous NPC test save were not modified. Final Node rerun passed all 31 tests; Java result files confirm 32 tests, zero failures/errors. `git diff --check` passed.

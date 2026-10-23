@@ -40,6 +40,15 @@ test('rejects unbounded controls, arbitrary fields, malformed targets and nonfin
     assert.deepEqual(validateAction('stop'), {});
 });
 
+test('terrain placement remains restricted to the explicit single-command test route', () => {
+    const command = 'spreadplayers 10 20 0 5 false DregoraTest';
+    assert.deepEqual(validateAction('test_command', { command }), { command });
+    assert.throws(() => validateAction('spreadplayers', { command }), { code: 'invalid_action' });
+    assert.throws(() => validateAction('test_command', { command: `/${command}` }), { code: 'invalid_argument' });
+    assert.throws(() => validateAction('test_command', { command: `${command}\ngamemode 1` }), { code: 'invalid_argument' });
+    assert.throws(() => validateAction('test_command', { command: 'say unrestricted' }), { code: 'invalid_argument' });
+});
+
 test('unknown capability values stay unknown and stale snapshots are rejected', () => {
     assert.equal(capabilityValue({ mods: { thirst: { status: 'unknown', value: { level: 20 } } } }, 'thirst'), null);
     assert.deepEqual(capabilityValue({ mods: { thirst: { status: 'available', value: { level: 3 } } } }, 'thirst'), { level: 3 });

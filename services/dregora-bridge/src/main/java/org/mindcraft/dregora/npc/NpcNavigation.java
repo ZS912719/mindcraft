@@ -3,6 +3,8 @@ package org.mindcraft.dregora.npc;
 import com.google.gson.JsonObject;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.init.Blocks;
+import net.minecraft.pathfinding.Path;
+import net.minecraft.pathfinding.PathPoint;
 import net.minecraft.util.math.*;
 import java.util.*;
 
@@ -10,6 +12,7 @@ import java.util.*;
 final class NpcNavigation {
     private final EntityTeammate npc;
     private LocalRoute search;
+    private NpcWalking walking, walkingCandidate;
     private List<LocalRoute.Step> path=Collections.emptyList();
     private int index, placementIndex, stepTicks, stuckTicks, retries, placed, nextSearchTick, edgeTicks;
     private double bestDistance=Double.POSITIVE_INFINITY;
@@ -22,16 +25,18 @@ final class NpcNavigation {
         npc.getMoveHelper().setMoveTo(npc.posX,npc.posY,npc.posZ,0);
     }
     void reset() {
-        search=null; path=Collections.emptyList(); snapshot.clear(); plannedGoal=null;
+        search=null; walking=walkingCandidate=null; path=Collections.emptyList(); snapshot.clear(); plannedGoal=null;
         index=placementIndex=stepTicks=stuckTicks=retries=placed=nextSearchTick=edgeTicks=0;
         bestDistance=Double.POSITIVE_INFINITY; status="idle"; reason="none";
         stopMotion();
     }
     JsonObject state() {
         JsonObject out=new JsonObject(); out.addProperty("status",status); out.addProperty("reason",reason);
-        out.addProperty("placedBlocks",placed); out.addProperty("remainingSteps",Math.max(0,path.size()-index));
+        out.addProperty("placedBlocks",placed); out.addProperty("remainingSteps",walking==null?Math.max(0,path.size()-index):walking.remaining());
+        out.addProperty("mode",walking==null?"construction_grid":"collision_walking");
         out.addProperty("replans",retries); out.addProperty("expandedNodes",search==null?0:search.expanded());
         if(search!=null && "ready".equals(search.status())) out.addProperty("routeCost",search.cost());
+        if(walking!=null) out.addProperty("routeCost",walking.cost());
         return out;
     }
     private static LocalRoute.Point point(Vec3d v) { BlockPos p=new BlockPos(v); return new LocalRoute.Point(p.getX(),p.getY(),p.getZ()); }
@@ -41,15 +46,14 @@ final class NpcNavigation {
         if(p.y<1 || p.y>=npc.world.getHeight()-1 || !npc.world.isBlockLoaded(pos,false)
             || !npc.world.getWorldBorder().contains(pos)) return LocalRoute.Cell.BLOCKED;
         IBlockState state=npc.world.getBlockState(pos);
-        if(npc.world.isAirBlock(pos)) return LocalRoute.Cell.AIR;
-        if(state.getMaterial().isLiquid() || state.getBlock()==Blocks.FIRE || state.getBlock()==Blocks.CACTUS
-            || state.getBlock()==Blocks.MAGMA || state.getBlock()==Blocks.TNT || state.getBlock()==Blocks.SLIME_BLOCK
-            || state.getBlock().getRegistryName()==null || !"minecraft".equals(state.getBlock().getRegistryName().getResourceDomain())) return LocalRoute.Cell.BLOCKED;
-        return state.isFullCube() && state.isOpaqueCube() ? LocalRoute.Cell.SOLID : LocalRoute.Cell.BLOCKED;
+        if(NpcTerrain.unsafe(state)) return LocalRoute.Cell.BLOCKED;
+        AxisAlignedBB collision=state.getCollisionBoundingBox(npc.world,pos);
+        if(npc.world.isAirBlock(pos) || collision==null || collision.maxY<=collision.minY) return LocalRoute.Cell.AIR;
+        return state.isFullCube() ? LocalRoute.Cell.SOLID : LocalRoute.Cell.BLOCKED;
     }
     private void retry(String failure) {
         stopMotion(); reason=failure; status="replanning";
-        search=null; path=Collections.emptyList(); snapshot.clear(); index=placementIndex=stepTicks=stuckTicks=edgeTicks=0;
+        search=null; walking=walkingCandidate=null; path=Collections.emptyList(); snapshot.clear(); index=placementIndex=stepTicks=stuckTicks=edgeTicks=0;
         plannedGoal=null;
         bestDistance=Double.POSITIVE_INFINITY; nextSearchTick=npc.ticksExisted+20;
         if(!"target_moved".equals(failure) && ++retries>3) status="navigation_failed";
@@ -59,8 +63,10 @@ final class NpcNavigation {
         if(plannedGoal!=null && plannedGoal.squareDistanceTo(goal)>4) retry("target_moved");
         if("navigation_failed".equals(status)) return status;
         if(npc.ticksExisted<nextSearchTick) return status;
+        if(walking!=null) return walk(goal,arrivalRadius);
         if(search==null) {
             plannedGoal=goal;
+            walkingCandidate=NpcWalking.plan(npc,goal,arrivalRadius);
             LocalRoute.Point start=point(npc.getPositionVector());
             if(cell(start.add(0,-1,0))!=LocalRoute.Cell.SOLID) {
                 LocalRoute.Point closest=null; double nearest=Double.POSITIVE_INFINITY;
@@ -70,7 +76,10 @@ final class NpcNavigation {
                     if(cell(candidate)==LocalRoute.Cell.AIR && cell(candidate.add(0,1,0))==LocalRoute.Cell.AIR
                         && cell(candidate.add(0,-1,0))==LocalRoute.Cell.SOLID && distance<nearest) { closest=candidate; nearest=distance; }
                 }
-                if(closest==null || nearest>2) { retry("start_unsupported"); return status; }
+                if(closest==null || nearest>2) {
+                    if(walkingCandidate!=null) { walking=walkingCandidate; return walk(goal,arrivalRadius); }
+                    retry("start_unsupported"); return status;
+                }
                 start=closest;
             }
             search=new LocalRoute(p->snapshot.computeIfAbsent(p,this::cell),start,
@@ -80,7 +89,14 @@ final class NpcNavigation {
         if("searching".equals(search.status())) {
             npc.getNavigator().clearPath(); search.advance(128,3000000);
             if("searching".equals(search.status())) return status;
-            if(!"ready".equals(search.status())) { retry(search.status()); return status; }
+            if(!"ready".equals(search.status())) {
+                if(walkingCandidate!=null) { walking=walkingCandidate; return walk(goal,arrivalRadius); }
+                retry(search.status()); return status;
+            }
+            if(walkingCandidate!=null && walkingCandidate.cost()<=search.cost()) {
+                walking=walkingCandidate; return walk(goal,arrivalRadius);
+            }
+            walkingCandidate=null;
             path=search.path(); index=placementIndex=stepTicks=stuckTicks=0;
             bestDistance=Double.POSITIVE_INFINITY;
         }
@@ -116,6 +132,15 @@ final class NpcNavigation {
         if(cell(target)!=LocalRoute.Cell.AIR || cell(target.add(0,1,0))!=LocalRoute.Cell.AIR
             || cell(target.add(0,-1,0))!=LocalRoute.Cell.SOLID) { retry("terrain_changed"); return status; }
         Vec3d destination=new Vec3d(target.x+0.5,target.y,target.z+0.5);
+        NpcTerrain terrain=new NpcTerrain(npc);
+        WalkSafety.Terrain occupiedSupport=new WalkSafety.Terrain() {
+            public boolean clear(Vec3d feet) { return terrain.clear(feet); }
+            public boolean standing(Vec3d feet) { return terrain.supportedBody(feet); }
+        };
+        if(!terrain.standing(destination) || !terrain.clear(npc.getPositionVector())
+            || (npc.onGround && !WalkSafety.edge(occupiedSupport,npc.getPositionVector(),destination))) {
+            retry("terrain_changed"); return status;
+        }
         double distance=npc.getPositionVector().squareDistanceTo(destination);
         // A bridge-side placement already puts the center inside the new standing cell.
         // Recognize that cell before asking vanilla navigation for another path from its edge.
@@ -127,11 +152,21 @@ final class NpcNavigation {
         if(distance+0.01<bestDistance) { bestDistance=distance; stuckTicks=0; } else stuckTicks++;
         if(stepTicks>100 || stuckTicks>40) { retry("movement_stalled"); return status; }
         if(stepTicks==1 || stepTicks%10==0) {
-            if(!npc.getNavigator().tryMoveToXYZ(destination.x,destination.y,destination.z,0.9)) {
+            // The grid already selected this adjacent edge; do not let vanilla substitute an unchecked detour.
+            if(!npc.getNavigator().setPath(new Path(new PathPoint[] {new PathPoint(target.x,target.y,target.z)}),0.9)) {
                 retry("waypoint_unreachable"); return status;
             }
         }
         status="pathing"; return status;
+    }
+    private String walk(Vec3d goal,double arrivalRadius) {
+        String result=walking.tick();
+        if("arrived".equals(result) && npc.getPositionVector().squareDistanceTo(goal)>arrivalRadius*arrivalRadius)
+            result="target_moved";
+        if(!"walking".equals(result) && !"arrived".equals(result)) { retry(result); return status; }
+        status=result;
+        if("arrived".equals(result)) stopMotion();
+        return status;
     }
     private boolean approachEdge(BlockPos support) {
         // MoveHelper consumes its target each AI tick; keep steering between placement attempts.

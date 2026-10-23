@@ -263,7 +263,7 @@ public final class DregoraBridge {
                 || !args.getAsJsonPrimitive("command").isString()) throw new IllegalArgumentException("invalid_command");
             String command = args.get("command").getAsString();
             if (command.length() > 2048 || command.contains("\n") || command.contains("\r")
-                || !command.matches("(give|replaceitem|summon|effect|tp|kill|gamemode|time|weather|difficulty|gamerule|reskillable|fill|advancement|mindcraft_npc) .+"))
+                || !command.matches("(give|replaceitem|summon|effect|tp|kill|gamemode|time|weather|difficulty|gamerule|reskillable|fill|advancement|mindcraft_npc|spreadplayers) .+"))
                 throw new IllegalArgumentException("invalid_command");
         }
         for (Map.Entry<String, JsonElement> field : args.entrySet()) if (!allowed.contains(field.getKey())) throw new IllegalArgumentException("unknown_argument");

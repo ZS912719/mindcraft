@@ -31,6 +31,8 @@ public class SummonTest {
         NBTTagCompound record = new NBTTagCompound();
         record.setUniqueId("UUID", uuid); record.setUniqueId("Owner", owner);
         record.setLong("Due", 12345); record.setString("Name", "Teammate");
+        record.setTag("MindcraftBackpack", new NBTTagCompound());
+        record.setTag("ArmorItems", new NBTTagList());
         NBTTagList entries = new NBTTagList(); entries.appendTag(record);
         NBTTagCompound saved = new NBTTagCompound(); saved.setTag("Pending", entries);
         NpcRespawns queue = new NpcRespawns(); queue.readFromNBT(saved);
@@ -38,6 +40,19 @@ public class SummonTest {
         assertEquals(uuid, restored.getUniqueId("UUID")); assertEquals(owner, restored.getUniqueId("Owner"));
         assertEquals(12345, restored.getLong("Due"));
         assertFalse(restored.hasKey("MindcraftBackpack")); assertFalse(restored.hasKey("ArmorItems"));
+    }
+    @Test public void malformedRespawnRecordsCannotCreateImmediateRespawns() {
+        NBTTagList records = new NBTTagList();
+        for (int i = 0; i < 3; i++) {
+            NBTTagCompound record = new NBTTagCompound();
+            record.setUniqueId("UUID", UUID.randomUUID()); record.setUniqueId("Owner", UUID.randomUUID());
+            if (i == 1) record.setLong("Due", -1);
+            if (i == 2) record.setString("Due", "invalid");
+            records.appendTag(record);
+        }
+        NBTTagCompound saved = new NBTTagCompound(); saved.setTag("Pending", records);
+        NpcRespawns queue = new NpcRespawns(); queue.readFromNBT(saved);
+        assertEquals(0,queue.writeToNBT(new NBTTagCompound()).getTagList("Pending",10).tagCount());
     }
     @Test public void summonAcceptsNoClientSelectedDestination() {
         JsonObject request = new JsonObject(); request.addProperty("id", "summon-test");

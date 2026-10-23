@@ -36,6 +36,18 @@ public final class NpcMod {
     public static void dimensionChanged(PlayerEvent.PlayerChangedDimensionEvent event) { NpcService.invalidate(event.player); }
     @SubscribeEvent
     public static void logout(PlayerEvent.PlayerLoggedOutEvent event) { NpcService.invalidate(event.player); }
+    @SubscribeEvent(priority = net.minecraftforge.fml.common.eventhandler.EventPriority.LOWEST)
+    public static void ownerDied(net.minecraftforge.event.entity.living.LivingDeathEvent event) {
+        if (event.getEntityLiving() instanceof net.minecraft.entity.player.EntityPlayer)
+            NpcService.invalidate((net.minecraft.entity.player.EntityPlayer) event.getEntityLiving());
+    }
+    @SubscribeEvent
+    public static void chunkUnloaded(net.minecraftforge.event.world.ChunkEvent.Unload event) {
+        if (event.getWorld().isRemote) return;
+        for (net.minecraft.util.ClassInheritanceMultiMap<net.minecraft.entity.Entity> entities : event.getChunk().getEntityLists())
+            for (net.minecraft.entity.Entity entity : entities)
+                if (entity instanceof EntityTeammate) ((EntityTeammate) entity).order("hold", null);
+    }
     @SubscribeEvent
     public static void serverTick(net.minecraftforge.fml.common.gameevent.TickEvent.ServerTickEvent event) {
         if (event.phase == net.minecraftforge.fml.common.gameevent.TickEvent.Phase.END) {

@@ -24,7 +24,9 @@ public final class NpcSummoning {
         npc.beginSummon();
     }
     static Vec3d landing(EntityTeammate npc, EntityPlayerMP player) {
-        if (!player.isEntityAlive() || player.isSpectator() || player.world != npc.world) return null;
+        if (!player.isEntityAlive() || player.isSpectator() || player.world != npc.world
+            || player.dimension != npc.dimension || player.dimension != player.world.provider.getDimension()
+            || !player.world.playerEntities.contains(player)) return null;
         BlockPos center = new BlockPos(player);
         List<Vec3d> candidates = new ArrayList<>();
         for (int x = -5; x <= 5; x++) for (int z = -5; z <= 5; z++) for (int y = -3; y <= 3; y++) {
@@ -47,20 +49,7 @@ public final class NpcSummoning {
         return null;
     }
     private static boolean safeLanding(EntityTeammate npc, Vec3d target) {
-        BlockPos feet = new BlockPos(target);
-        if (target.y < 1 || target.y + npc.height >= npc.world.getHeight()
-            || !npc.world.getWorldBorder().contains(feet)) return false;
-        AxisAlignedBB body = npc.getEntityBoundingBox().offset(target.x - npc.posX, target.y - npc.posY, target.z - npc.posZ);
-        if (!npc.world.getCollisionBoxes(npc, body).isEmpty()) return false;
-        for (BlockPos pos : BlockPos.getAllInBox(new BlockPos(body.minX, body.minY - 0.01, body.minZ),
-            new BlockPos(body.maxX, body.maxY, body.maxZ))) {
-            net.minecraft.block.state.IBlockState state = npc.world.getBlockState(pos);
-            net.minecraft.block.Block block = state.getBlock();
-            if (state.getMaterial().isLiquid() || block == net.minecraft.init.Blocks.FIRE
-                || block == net.minecraft.init.Blocks.CACTUS || block == net.minecraft.init.Blocks.MAGMA
-                || block.getRegistryName() == null || !"minecraft".equals(block.getRegistryName().getResourceDomain())) return false;
-        }
-        return true;
+        return new NpcTerrain(npc).standing(target);
     }
     static boolean teleport(EntityTeammate npc, EntityPlayerMP player, String reason) {
         return teleport(npc, player, reason, "hold");

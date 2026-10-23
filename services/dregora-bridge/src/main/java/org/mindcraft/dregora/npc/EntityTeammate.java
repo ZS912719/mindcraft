@@ -43,6 +43,7 @@ public final class EntityTeammate extends EntityCreature {
         super.applyEntityAttributes();
         getEntityAttribute(SharedMonsterAttributes.MAX_HEALTH).setBaseValue(20);
         getEntityAttribute(SharedMonsterAttributes.MOVEMENT_SPEED).setBaseValue(0.25);
+        getEntityAttribute(SharedMonsterAttributes.FOLLOW_RANGE).setBaseValue(32);
     }
     @Override public boolean attackEntityAsMob(Entity entity) { return false; }
     public UUID owner() { return owner; }
@@ -64,7 +65,15 @@ public final class EntityTeammate extends EntityCreature {
         navigation.reset();
         movement = "hold".equals(value) ? "holding" : "requested";
     }
+    void cancelForLifecycle() { order("hold", null); movement = "owner_unavailable"; }
+    private boolean ownerAvailable() {
+        EntityPlayer player = owner == null ? null : world.getPlayerEntityByUUID(owner);
+        return player != null && player.isEntityAlive() && !player.isSpectator() && player.world == world
+            && player.dimension == dimension && player.dimension == player.world.provider.getDimension();
+    }
     @Override public void onLivingUpdate() {
+        // Cancel before vanilla AI advances a previously accepted movement or placement order.
+        if (!world.isRemote && isEntityAlive() && !"hold".equals(command) && !ownerAvailable()) cancelForLifecycle();
         super.onLivingUpdate();
         if (world.isRemote || !isEntityAlive()) return;
         if (rescueRetryTicks > 0) rescueRetryTicks--;
@@ -109,7 +118,7 @@ public final class EntityTeammate extends EntityCreature {
             navigation.stopMotion();
             movement = decision;
             if ("owner_unavailable".equals(decision)) {
-                command = "hold"; destination = null; remainingTicks = 0;
+                cancelForLifecycle();
             }
             if ("retreat_expired".equals(decision) || "navigation_expired".equals(decision)
                 || (("retreat".equals(command) || "navigate".equals(command)) && "arrived".equals(decision))) {
@@ -148,6 +157,7 @@ public final class EntityTeammate extends EntityCreature {
         return super.attackEntityFrom(source, amount);
     }
     @Override public void onDeath(DamageSource source) {
+        if (!world.isRemote) order("hold", null);
         super.onDeath(source);
         if (!world.isRemote && dead) NpcRespawns.schedule(this);
     }

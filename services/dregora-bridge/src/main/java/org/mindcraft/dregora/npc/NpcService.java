@@ -3,11 +3,9 @@ package org.mindcraft.dregora.npc;
 import com.google.gson.*;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayerMP;
-import net.minecraft.init.Blocks;
 import net.minecraft.inventory.EntityEquipmentSlot;
 import net.minecraft.item.ItemStack;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import java.util.*;
 
@@ -29,7 +27,7 @@ public final class NpcService {
         for (net.minecraft.world.WorldServer world : activeServer.worlds)
             for (Entity entity : world.loadedEntityList)
                 if (entity instanceof EntityTeammate && player.getUniqueID().equals(((EntityTeammate) entity).owner()))
-                    ((EntityTeammate) entity).order("hold", null);
+                    ((EntityTeammate) entity).cancelForLifecycle();
     }
     private static final class OwnerSession {
         final EntityPlayerMP player;
@@ -60,6 +58,9 @@ public final class NpcService {
         out.addProperty("protocol", 1); out.addProperty("backend", "npc_prototype");
         out.addProperty("session", session(player)); out.addProperty("timestamp", System.currentTimeMillis());
         out.addProperty("dimension", player.dimension); out.addProperty("source", "integrated_server");
+        out.addProperty("worldDimension", player.world.provider.getDimension());
+        out.addProperty("worldTime", player.world.getTotalWorldTime());
+        out.addProperty("ownerPresent", player.world.playerEntities.contains(player));
         out.addProperty("loadedOnly", true);
         JsonArray npcs = new JsonArray();
         for (Entity entity : player.world.loadedEntityList) if (entity instanceof EntityTeammate
@@ -83,6 +84,8 @@ public final class NpcService {
         out.addProperty("uuid", npc.getUniqueID().toString()); out.addProperty("owner", npc.owner().toString());
         out.addProperty("alive", npc.isEntityAlive()); out.addProperty("health", npc.getHealth());
         out.addProperty("command", npc.command()); out.addProperty("movement", npc.movement());
+        out.addProperty("dimension", npc.dimension);
+        out.addProperty("ticksExisted", npc.ticksExisted);
         out.addProperty("summonTicks", npc.summonTicks());
         out.add("navigation", npc.navigationState()); out.addProperty("buildingSupplies", NpcBuilding.supplies(npc));
         position.addProperty("x", npc.posX); position.addProperty("y", npc.posY); position.addProperty("z", npc.posZ);
@@ -156,7 +159,10 @@ public final class NpcService {
             return results.get(id);
         }
         if (System.currentTimeMillis() > deadline) throw new IllegalStateException("npc_command_expired");
-        if (!npc.isEntityAlive() || !player.isEntityAlive() || player.isSpectator()) throw new IllegalStateException("actor_unavailable");
+        if (!npc.isEntityAlive() || !player.isEntityAlive() || player.isSpectator()
+            || player.dimension != npc.dimension || player.dimension != player.world.provider.getDimension()
+            || !player.world.playerEntities.contains(player))
+            throw new IllegalStateException("actor_unavailable");
         String command = request.get("command").getAsString();
         Vec3d target = null;
         if (!"hold".equals(command) && !"summon".equals(command) && npc.getDistanceSq(player) > 32 * 32) throw new IllegalArgumentException("outside_local_range");
@@ -179,15 +185,6 @@ public final class NpcService {
     }
 
     static boolean safeDestination(EntityTeammate npc, Vec3d target) {
-        BlockPos pos = new BlockPos(target);
-        if (pos.getY() < 1 || pos.getY() >= npc.world.getHeight() - 1 || !npc.world.isAreaLoaded(pos.add(-1, -1, -1), pos.add(1, 2, 1))
-            || !npc.world.getWorldBorder().contains(pos)) return false;
-        for (BlockPos check : new BlockPos[] {pos.down(), pos, pos.up()}) {
-            net.minecraft.block.state.IBlockState state = npc.world.getBlockState(check);
-            if (state.getMaterial().isLiquid() || state.getBlock() == Blocks.FIRE || state.getBlock() == Blocks.CACTUS
-                || state.getBlock() == Blocks.MAGMA) return false;
-        }
-        return npc.world.getBlockState(pos.down()).isTopSolid()
-            && npc.world.getCollisionBoxes(npc, npc.getEntityBoundingBox().offset(target.x - npc.posX, target.y - npc.posY, target.z - npc.posZ)).isEmpty();
+        return new NpcTerrain(npc).standing(target);
     }
 }
